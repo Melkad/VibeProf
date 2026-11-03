@@ -147,7 +147,7 @@ def apply_correction(client, outputs, rapport):
     if not match:
         return outputs, False
     index = int(match.group(1)) - 1
-    if not (1 <= index < len(AGENTS)):
+    if not (0 <= index < len(AGENTS)):
         return outputs, False
     name, prompt, use_web = AGENTS[index]
     consignes = "\n".join(f"- {c}" for c in rapport.get("consignes_correction", []))
