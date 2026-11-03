@@ -6,6 +6,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from docx import Document
 from mistralai.client import Mistral
 
 MODEL = os.environ.get("MISTRAL_MODEL", "mistral-large-latest")
@@ -168,6 +169,35 @@ def apply_correction(client, outputs, rapport):
     return outputs, True
 
 
+def build_docx(path, demande, outputs, rapports):
+    doc = Document()
+    doc.add_heading("Cours généré", level=0)
+    doc.add_paragraph(f"Demande : {demande}")
+    for name, content in outputs.items():
+        if name == "demande":
+            continue
+        doc.add_heading(name, level=1)
+        for block in re.split(r"\n\s*\n", content.strip()):
+            block = block.strip()
+            if not block:
+                continue
+            if block.startswith("### "):
+                doc.add_heading(block[4:], level=3)
+            elif block.startswith("## "):
+                doc.add_heading(block[3:], level=2)
+            elif block.startswith("# "):
+                doc.add_heading(block[2:], level=1)
+            elif block.startswith("- "):
+                doc.add_paragraph(block[2:], style="List Bullet")
+            else:
+                doc.add_paragraph(block)
+    doc.add_heading("Rapports de relecture", level=1)
+    for i, r in enumerate(rapports, 1):
+        doc.add_heading(f"Itération {i} — score {r.get('score_global')}/5, livraison : {r.get('livraison')}", level=2)
+        doc.add_paragraph(json.dumps(r, ensure_ascii=False, indent=2))
+    doc.save(path)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Workflow agentique de création de cours (Mistral)")
     parser.add_argument("demande", help="Demande du prof, ex: 'Terminale bac pro Commerce, thème: la mondialisation, 2h, TD'")
@@ -209,17 +239,9 @@ def main():
     }
     (outdir / "cours_final.json").write_text(json.dumps(final, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    md = [f"# Cours généré — {args.demande}", ""]
-    for name, content in outputs.items():
-        if name == "demande":
-            continue
-        md.append(f"## {name}\n\n{content}\n")
-    md.append("## Rapports de relecture\n")
-    for i, r in enumerate(rapports, 1):
-        md.append(f"### Itération {i}\n```json\n{json.dumps(r, ensure_ascii=False, indent=2)}\n```\n")
-    (outdir / "cours_final.md").write_text("\n".join(md), encoding="utf-8")
+    build_docx(outdir / "cours_final.docx", args.demande, outputs, rapports)
 
-    print(f"Terminé en {len(rapports)} itération(s). Résultat : {outdir}/cours_final.md")
+    print(f"Terminé en {len(rapports)} itération(s). Résultat : {outdir}/cours_final.docx")
 
 
 if __name__ == "__main__":
