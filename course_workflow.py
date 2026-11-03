@@ -107,7 +107,23 @@ AGENTS = [
 ]
 
 
+def chunk_text(chunk):
+    if isinstance(chunk, str):
+        return chunk
+    if isinstance(chunk, dict):
+        if chunk.get("type") == "text" and isinstance(chunk.get("text"), str):
+            return chunk["text"]
+        return None
+    if getattr(chunk, "type", None) == "text":
+        texte = getattr(chunk, "text", None)
+        return texte if isinstance(texte, str) else None
+    return None
+
+
 def call_agent(client, system_prompt, user_content):
+    if not isinstance(user_content, str):
+        parts = [chunk_text(c) for c in user_content] if isinstance(user_content, list) else [str(user_content)]
+        user_content = "\n".join(p for p in parts if p)
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
@@ -127,10 +143,14 @@ def call_sources_agent(client, demande):
         response = client.beta.conversations.start(agent_id=agent.id, inputs=demande)
         textes = []
         for entry in response.outputs:
-            if getattr(entry, "type", None) == "message.output":
-                for chunk in entry.content:
-                    if getattr(chunk, "type", None) == "text" and getattr(chunk, "text", None):
-                        textes.append(chunk.text)
+            entry_type = entry.get("type") if isinstance(entry, dict) else getattr(entry, "type", None)
+            if entry_type != "message.output":
+                continue
+            content = entry.get("content", []) if isinstance(entry, dict) else getattr(entry, "content", [])
+            for chunk in content or []:
+                texte = chunk_text(chunk)
+                if texte:
+                    textes.append(texte)
         return "\n".join(textes)
     finally:
         client.beta.agents.delete(agent_id=agent.id)
