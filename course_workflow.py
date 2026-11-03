@@ -9,7 +9,7 @@ from pathlib import Path
 from docx import Document
 from mistralai.client import Mistral
 
-MODEL = os.environ.get("MISTRAL_MODEL", "mistral-large-latest")
+MODEL = os.environ.get("MISTRAL_MODEL", "mistral-large-4")
 MAX_RELECTURES = 3
 SEUIL_LIVRAISON = 4.0
 
