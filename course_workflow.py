@@ -121,14 +121,18 @@ def call_sources_agent(client, demande):
         model=MODEL,
         name="vibeprof-sources-officielles",
         instructions=PROMPT_SOURCES,
-        tools=[{"type": "web_search_premium"}],
+        tools=[{"type": "web_search"}],
     )
     try:
-        response = client.agents.complete(
-            agent_id=agent.id,
-            messages=[{"role": "user", "content": demande}],
-        )
-        return response.choices[0].message.content
+        response = client.beta.conversations.start(agent_id=agent.id, inputs=demande)
+        textes = []
+        for entry in response.outputs:
+            if getattr(entry, "type", None) == "message.output":
+                for chunk in entry.content:
+                    texte = getattr(chunk, "text", None)
+                    if texte:
+                        textes.append(texte)
+        return "\n".join(textes)
     finally:
         client.beta.agents.delete(agent_id=agent.id)
 
