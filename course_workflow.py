@@ -121,7 +121,7 @@ def call_sources_agent(client, demande):
         model=MODEL,
         name="vibeprof-sources-officielles",
         instructions=PROMPT_SOURCES,
-        tools=[{"type": "web_search"}],
+        tools=[{"type": "web_search_premium"}],
     )
     try:
         response = client.agents.complete(
