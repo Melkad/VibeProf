@@ -107,17 +107,30 @@ AGENTS = [
 ]
 
 
-def call_agent(client, system_prompt, user_content, use_web=False):
+def call_agent(client, system_prompt, user_content):
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
-    kwargs = {"model": MODEL, "messages": messages, "temperature": 0.4}
-    if use_web:
-        kwargs["tools"] = [{"type": "web_search"}]
-        kwargs["tool_choice"] = "auto"
-    response = client.chat.complete(**kwargs)
+    response = client.chat.complete(model=MODEL, messages=messages, temperature=0.4)
     return response.choices[0].message.content
+
+
+def call_sources_agent(client, demande):
+    agent = client.beta.agents.create(
+        model=MODEL,
+        name="vibeprof-sources-officielles",
+        instructions=PROMPT_SOURCES,
+        tools=[{"type": "web_search"}],
+    )
+    try:
+        response = client.agents.complete(
+            agent_id=agent.agent_id,
+            messages=[{"role": "user", "content": demande}],
+        )
+        return response.choices[0].message.content
+    finally:
+        client.beta.agents.delete(agent_id=agent.agent_id)
 
 
 def extract_json(text):
@@ -131,7 +144,10 @@ def run_pipeline(client, demande):
     outputs = {}
     current = demande
     for name, prompt, use_web in AGENTS:
-        current = call_agent(client, prompt, current, use_web=use_web)
+        if use_web:
+            current = call_sources_agent(client, current)
+        else:
+            current = call_agent(client, prompt, current)
         outputs[name] = current
     return outputs
 
@@ -156,16 +172,14 @@ def apply_correction(client, outputs, rapport):
         previous_input = outputs.get("demande", "")
     else:
         previous_input = outputs[AGENTS[index - 1][0]]
-    corrected = call_agent(
-        client,
-        prompt,
-        f"{previous_input}\n\nCORRECTIONS DEMANDÉES PAR LE RELECTEUR :\n{consignes}",
-        use_web=use_web,
-    )
+    corrected = call_agent(client, prompt, f"{previous_input}\n\nCORRECTIONS DEMANDÉES PAR LE RELECTEUR :\n{consignes}")
     outputs[name] = corrected
     for j in range(index + 1, len(AGENTS)):
         n, p, w = AGENTS[j]
-        outputs[n] = call_agent(client, p, outputs[AGENTS[j - 1][0]], use_web=w)
+        if w:
+            outputs[n] = call_sources_agent(client, outputs[AGENTS[j - 1][0]])
+        else:
+            outputs[n] = call_agent(client, p, outputs[AGENTS[j - 1][0]])
     return outputs, True
 
 
