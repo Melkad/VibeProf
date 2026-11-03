@@ -129,9 +129,8 @@ def call_sources_agent(client, demande):
         for entry in response.outputs:
             if getattr(entry, "type", None) == "message.output":
                 for chunk in entry.content:
-                    texte = getattr(chunk, "text", None)
-                    if texte:
-                        textes.append(texte)
+                    if getattr(chunk, "type", None) == "text" and getattr(chunk, "text", None):
+                        textes.append(chunk.text)
         return "\n".join(textes)
     finally:
         client.beta.agents.delete(agent_id=agent.id)
