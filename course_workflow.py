@@ -125,12 +125,12 @@ def call_sources_agent(client, demande):
     )
     try:
         response = client.agents.complete(
-            agent_id=agent.agent_id,
+            agent_id=agent.id,
             messages=[{"role": "user", "content": demande}],
         )
         return response.choices[0].message.content
     finally:
-        client.beta.agents.delete(agent_id=agent.agent_id)
+        client.beta.agents.delete(agent_id=agent.id)
 
 
 def extract_json(text):
@@ -163,7 +163,7 @@ def apply_correction(client, outputs, rapport):
     if not match:
         return outputs, False
     index = int(match.group(1)) - 1
-    if not (0 <= index < len(AGENTS)):
+    if not (1 <= index < len(AGENTS)):
         return outputs, False
     name, prompt, use_web = AGENTS[index]
     consignes = "\n".join(f"- {c}" for c in rapport.get("consignes_correction", []))
