@@ -1,4 +1,5 @@
 import json
+import unittest.mock
 import sys
 import tempfile
 import unittest
@@ -9,6 +10,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import course_workflow as cw  # noqa: E402
 from docx import Document  # noqa: E402
+from mistralai.client.errors import MistralError  # noqa: E402
+
+
+def api_error(status, body):
+    return MistralError("erreur API", SimpleNamespace(status_code=status, text=body, headers={}), body)
 
 
 def ns(**kw):
@@ -18,8 +24,11 @@ def ns(**kw):
 class FakeClient:
     """Faux client Mistral : enregistre les appels et renvoie des réponses scriptées."""
 
-    def __init__(self, rapports=None, content_as_list=False):
+    def __init__(self, rapports=None, content_as_list=False, refused_models=(), no_reasoning_models=()):
         self.calls = []
+        self.refused_models = set(refused_models)
+        self.no_reasoning_models = set(no_reasoning_models)
+        self.models = []  # (system prompt ou nom d'agent, modèle, reasoning_effort, temperature)
         self.rapports = list(rapports or [])
         self.content_as_list = content_as_list
         self.deleted = []
@@ -33,24 +42,41 @@ class FakeClient:
         content = [ns(type="thinking", thinking=[]), ns(type="text", text=text)] if self.content_as_list else text
         return ns(choices=[ns(message=ns(content=content))])
 
-    def _complete(self, model, messages, temperature, response_format=None):
+    def _check_model(self, model, reasoning):
+        if model in self.refused_models:
+            raise api_error(400, f'{{"message": "Invalid model: {model}"}}')
+        if reasoning and model in self.no_reasoning_models:
+            raise api_error(422, '{"message": "reasoning_effort is not supported"}')
+
+    def _complete(self, model, messages, temperature, response_format=None, reasoning_effort=None):
         system, user = messages[0]["content"], messages[1]["content"]
         assert isinstance(user, str)
+        self._check_model(model, reasoning_effort)
+        self.models.append((system, model, reasoning_effort, temperature))
         self.calls.append(("chat", system, user))
         if system == cw.PROMPT_RELECTEUR:
             return self._reply(json.dumps(self.rapports.pop(0)))
         agent = next(a for a in cw.AGENTS if a["prompt"] == system)
         return self._reply(f"# {agent['title']}\n\nSortie de {agent['name']}")
 
-    def _create_agent(self, **kw):
-        self.calls.append(("create_agent", kw["tools"]))
+    def _create_agent(self, model, name, instructions, tools, completion_args):
+        self._check_model(model, completion_args.get("reasoning_effort"))
+        self.models.append((instructions, model, completion_args.get("reasoning_effort"),
+                            completion_args["temperature"]))
+        self.calls.append(("create_agent", tools))
+        self.current_agent = instructions
         return ns(id="ag_1")
 
     def _delete_agent(self, agent_id):
         self.deleted.append(agent_id)
 
     def _start(self, agent_id, inputs):
-        self.calls.append(("web", inputs))
+        self.calls.append(("web", self.current_agent, inputs))
+        if self.current_agent == cw.PROMPT_DOCUMENTS:
+            return ns(outputs=[ns(type="message.output", content=[
+                ns(type="text", text="Texte de Jaurès (https://gallica.bnf.fr/ark:/1) ; voir https://invente.example/x"),
+                ns(type="tool_reference", title="Gallica", url="https://gallica.bnf.fr/ark:/1", tool="web_search"),
+            ])])
         return ns(outputs=[
             ns(type="tool.execution"),
             ns(type="message.output", content=[
@@ -64,7 +90,10 @@ class FakeClient:
 
     def inputs_for(self, agent_name):
         prompt = cw.AGENTS_BY_NAME[agent_name]["prompt"]
-        return [u for kind, s, u in (c for c in self.calls if c[0] == "chat") if s == prompt]
+        return [c[2] for c in self.calls if c[0] in ("chat", "web") and c[1] == prompt]
+
+    def model_of(self, prompt):
+        return [m for m in self.models if m[0] == prompt][-1]
 
 
 RAPPORT_OK = {"score_global": 4.4, "notes": {"c1_ancrage_programme": 5, "c2_deroule": 4,
@@ -77,7 +106,12 @@ def rapport_ko(retour):
             "retour_vers": retour, "consignes_correction": ["Revoir la durée"]}
 
 
-class PipelineTests(unittest.TestCase):
+class RouteurReset(unittest.TestCase):
+    def setUp(self):
+        cw.ROUTEUR.reset()
+
+
+class PipelineTests(RouteurReset):
     def test_agents_receive_all_declared_inputs(self):
         client = FakeClient()
         out = cw.run_pipeline(client, "Terminale bac pro, mondialisation, 2h")
@@ -91,7 +125,7 @@ class PipelineTests(unittest.TestCase):
         docs_in = client.inputs_for("5_documents_eleves")[0]
         for n in ("2_cadrage", "3_deroule", "4_support_cours"):
             self.assertIn(f"Sortie de {n}", docs_in)
-        self.assertEqual(client.deleted, ["ag_1"])
+        self.assertEqual(client.deleted, ["ag_1", "ag_1"])  # agents web 1 et 5 nettoyés
         self.assertTrue(all(isinstance(v, str) for v in out.values()))
 
     def test_list_content_is_normalized(self):
@@ -119,19 +153,19 @@ class PipelineTests(unittest.TestCase):
         _, ok = cw.apply_correction(client, out, cw.normalize_rapport(rapport_ko("agent 1")))
         self.assertTrue(ok)
         web = [c for c in client.calls if c[0] == "web"]
-        self.assertEqual(len(web), 1)
-        self.assertIn("Revoir la durée", web[0][1])
-        self.assertEqual(len([c for c in client.calls if c[0] == "chat"]), 5)
+        self.assertEqual([c[1] for c in web], [cw.PROMPT_SOURCES, cw.PROMPT_DOCUMENTS])
+        self.assertIn("Revoir la durée", web[0][2])
+        self.assertEqual(len([c for c in client.calls if c[0] == "chat"]), 4)
 
     def test_correction_only_reruns_dependents(self):
         client = FakeClient()
         out = cw.run_pipeline(client, "demande")
         client.calls.clear()
-        cw.apply_correction(client, out, cw.normalize_rapport(rapport_ko("agent 5")))
-        self.assertEqual(len(client.calls), 1)  # personne ne dépend des documents élèves
+        cw.apply_correction(client, out, cw.normalize_rapport(rapport_ko("agent 6")))
+        self.assertEqual(len(client.calls), 1)  # personne ne dépend de l'évaluation
         client.calls.clear()
         cw.apply_correction(client, out, cw.normalize_rapport(rapport_ko("agent 4")))
-        rerun = [s for _, s, _ in client.calls]
+        rerun = [c[1] for c in client.calls if c[0] in ("chat", "web")]
         self.assertEqual(rerun, [cw.PROMPT_REDACTION, cw.PROMPT_DOCUMENTS, cw.PROMPT_EVALUATION])
 
     def test_invalid_target(self):
@@ -141,7 +175,60 @@ class PipelineTests(unittest.TestCase):
             self.assertFalse(ok, retour)
 
 
-class RapportTests(unittest.TestCase):
+class ModelesTests(RouteurReset):
+    def test_default_routing(self):
+        client = FakeClient(rapports=[RAPPORT_OK])
+        out = cw.run_pipeline(client, "demande")
+        cw.run_relecture(client, out)
+        principal, leger = cw.MODELES["principal"], cw.MODELES["leger"]
+        self.assertEqual(client.model_of(cw.PROMPT_SOURCES)[1:], (principal, None, 0.1))
+        self.assertEqual(client.model_of(cw.PROMPT_CADRAGE)[1], principal)
+        self.assertEqual(client.model_of(cw.PROMPT_DOCUMENTS)[1], principal)
+        self.assertEqual(client.model_of(cw.PROMPT_EVALUATION)[1], leger)
+        self.assertEqual(client.model_of(cw.PROMPT_RELECTEUR)[1:], (leger, "high", 0))
+        self.assertNotEqual(leger, principal)  # le relecteur ne juge pas son propre modèle
+        self.assertEqual(cw.ROUTEUR.utilises["relecteur"], f"{leger} (raisonnement : high)")
+
+    def test_env_override_per_agent(self):
+        with unittest.mock.patch.dict("os.environ", {"MISTRAL_MODEL_EVALUATION": "mon-modele"}):
+            client = FakeClient()
+            cw.run_pipeline(client, "demande")
+        self.assertEqual(client.model_of(cw.PROMPT_EVALUATION)[1], "mon-modele")
+
+    def test_fallback_when_model_refused(self):
+        principal, secours = cw.MODELES["principal"], cw.MODELES["secours"]
+        client = FakeClient(refused_models=[principal])
+        cw.run_pipeline(client, "demande")
+        for prompt in (cw.PROMPT_SOURCES, cw.PROMPT_CADRAGE, cw.PROMPT_DOCUMENTS):
+            self.assertEqual(client.model_of(prompt)[1], secours)
+        self.assertEqual(cw.ROUTEUR.substitutions, {principal: secours})
+        # la substitution est mémorisée : un seul refus, pas un par agent
+        self.assertEqual(sum(1 for m in client.models if m[1] == principal), 0)
+        self.assertEqual(client.model_of(cw.PROMPT_EVALUATION)[1], cw.MODELES["leger"])
+
+    def test_reasoning_dropped_if_unsupported(self):
+        client = FakeClient(rapports=[RAPPORT_OK], no_reasoning_models=[cw.MODELES["leger"]])
+        out = cw.run_pipeline(client, "demande")
+        rapport, _ = cw.run_relecture(client, out)
+        self.assertEqual(rapport["livraison"], "oui")
+        self.assertEqual(client.model_of(cw.PROMPT_RELECTEUR)[1:3], (cw.MODELES["leger"], None))
+
+    def test_other_errors_are_raised(self):
+        client = FakeClient()
+        client.chat.complete = lambda **kw: (_ for _ in ()).throw(api_error(401, "Unauthorized"))
+        with self.assertRaises(MistralError):
+            cw.call_agent(client, cw.AGENTS_BY_NAME["2_cadrage"], "x")
+
+    def test_documents_sources_not_restricted_to_official(self):
+        out = cw.run_pipeline(FakeClient(), "demande")
+        docs = out["5_documents_eleves"]
+        consultees, _, a_verifier = docs.partition("URL citées non issues de la recherche")
+        self.assertIn("https://gallica.bnf.fr/ark:/1", consultees.split("Sources consultées")[1])
+        self.assertIn("invente.example", a_verifier)
+        self.assertNotIn("gallica", a_verifier)
+
+
+class RapportTests(RouteurReset):
     def test_normalize_recomputes_score(self):
         r = cw.normalize_rapport({"score_global": None, "notes": {"a": 4, "b": "5"}, "livraison": "non"})
         self.assertEqual(r["score_global"], 4.5)
@@ -167,7 +254,7 @@ class RapportTests(unittest.TestCase):
         self.assertEqual(rapport["livraison"], "oui")
 
 
-class DocxTests(unittest.TestCase):
+class DocxTests(RouteurReset):
     def test_markdown_rendering(self):
         md = ("# Titre\n## Sous-titre\nTexte **gras** et *italique*.\n\n- un\n- deux\n  - sous-point\n"
               "1. premier\n2. second\n\n| Date | Événement |\n|---|---|\n| 1945 | Fin de la guerre |\n")
@@ -197,6 +284,9 @@ class DocxTests(unittest.TestCase):
         self.assertTrue(any("ATTENTION" in t for t in textes))
         self.assertIn("Référentiel officiel", textes)
         self.assertNotIn("1_referentiel_officiel", textes)
+        self.assertIn("Modèles utilisés", textes)
+        cells = [c.text for t in doc.tables for row in t.rows for c in row.cells]
+        self.assertIn(cw.MODELES["leger"], cells)
 
 
 if __name__ == "__main__":

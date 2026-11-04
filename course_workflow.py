@@ -11,9 +11,18 @@ from docx import Document
 from docx.shared import Pt, RGBColor
 
 from mistralai.client import Mistral
+from mistralai.client.errors import MistralError
 from mistralai.client.utils import BackoffStrategy, RetryConfig
 
-MODEL = os.environ.get("MISTRAL_MODEL", "mistral-large-4")
+# Trois niveaux de modèles, surchargeables par variables d'environnement.
+#  - principal : rédaction et raisonnement pédagogique (qualité maximale)
+#  - leger     : tâches courtes et structurées, et relecture (modèle différent des rédacteurs)
+#  - secours   : modèle stable utilisé si un modèle est refusé par l'API (préversion retirée, id inconnu…)
+MODELES = {
+    "principal": os.environ.get("MISTRAL_MODEL", "mistral-large-4"),
+    "leger": os.environ.get("MISTRAL_MODEL_LEGER", "mistral-small-2603"),
+    "secours": os.environ.get("MISTRAL_MODEL_SECOURS", "mistral-large-2512"),
+}
 MAX_RELECTURES = 3
 SEUIL_LIVRAISON = 4.0
 DOMAINES_OFFICIELS = ("eduscol.education.fr", "education.gouv.fr")
@@ -63,9 +72,14 @@ Sortie : le support de cours complet, rédigé, prêt à être projeté ou distr
 
 PROMPT_DOCUMENTS = """Tu es un concepteur de documents et d'activités pour des élèves de lycée professionnel.
 
+Règles sur les sources :
+- Utilise la recherche web pour trouver de vrais documents (textes historiques, extraits officiels, statistiques, articles) en privilégiant les sites institutionnels, d'archives, de musées et de presse reconnue.
+- Tout texte présenté comme authentique (citation, extrait, chiffre) doit être accompagné de son auteur, sa date et l'URL où tu l'as trouvé. Ne cite jamais de mémoire.
+- Si tu ne trouves pas de source vérifiable, rédige un texte adapté pour la classe et indique explicitement « Texte rédigé pour la séance (non authentique) ».
+
 Entrée attendue : le cadrage, le déroulé et le support de cours.
 Sortie : un dossier « Documents élèves » contenant :
-- 1 à 2 textes sources adaptés au niveau (avec indication de provenance ; si tu cites un texte historique, indique la source exacte)
+- 1 à 2 textes sources adaptés au niveau (avec provenance et URL, ou mention « non authentique »)
 - 1 carte ou schéma à compléter, décrit précisément (titre, éléments à placer, légende attendue)
 - 2 à 3 questions de guidage progressives (du plus simple au plus complexe)
 - 1 exercice d'application ou de mise en situation
@@ -96,6 +110,8 @@ Grille d'évaluation (note chaque critère sur 5) :
 4. Cohérence entre objectifs, support, documents et évaluation
 5. Absence d'erreurs factuelles et de biais
 
+Pour les critères 1 et 5, appuie-toi sur les listes de sources jointes au référentiel et aux documents élèves : un point de programme sans source officielle, ou une citation présentée comme authentique sans URL dans la liste des sources consultées, doit faire baisser la note.
+
 Règles :
 - Score global = moyenne des 5 critères. Seuil de livraison : 4/5.
 - Si score < 4/5, liste précisément les défauts et indique À QUEL AGENT renvoyer la production (agent 1 à 6 : choisis l'agent le plus en amont à l'origine du défaut principal) avec les consignes de correction.
@@ -111,21 +127,34 @@ Sortie : UNIQUEMENT un objet JSON valide, sans texte avant ni après, de la form
   "consignes_correction": ["..."]
 }"""
 
-# Chaque agent déclare les productions dont il a besoin (« demande » = la demande initiale du prof).
+# Chaque agent déclare :
+#  - inputs : les productions dont il a besoin (« demande » = la demande initiale du prof)
+#  - web / sources_officielles : recherche web, et filtrage strict aux domaines officiels ou non
+#  - tier, temperature, reasoning_effort : le modèle et ses réglages
+#  - key : suffixe de la variable d'environnement de surcharge (MISTRAL_MODEL_<KEY>)
 AGENTS = [
     {"name": "1_referentiel_officiel", "title": "Référentiel officiel", "prompt": PROMPT_SOURCES,
-     "inputs": ["demande"], "web": True},
+     "inputs": ["demande"], "web": True, "sources_officielles": True,
+     "key": "REFERENTIEL", "tier": "principal", "temperature": 0.1},
     {"name": "2_cadrage", "title": "Cadrage", "prompt": PROMPT_CADRAGE,
-     "inputs": ["demande", "1_referentiel_officiel"], "web": False},
+     "inputs": ["demande", "1_referentiel_officiel"], "web": False,
+     "key": "CADRAGE", "tier": "principal", "temperature": 0.2},
     {"name": "3_deroule", "title": "Déroulé de séance", "prompt": PROMPT_CONCEPTION,
-     "inputs": ["demande", "2_cadrage"], "web": False},
+     "inputs": ["demande", "2_cadrage"], "web": False,
+     "key": "DEROULE", "tier": "principal", "temperature": 0.5},
     {"name": "4_support_cours", "title": "Support de cours", "prompt": PROMPT_REDACTION,
-     "inputs": ["2_cadrage", "3_deroule"], "web": False},
+     "inputs": ["2_cadrage", "3_deroule"], "web": False,
+     "key": "SUPPORT", "tier": "principal", "temperature": 0.4},
     {"name": "5_documents_eleves", "title": "Documents élèves", "prompt": PROMPT_DOCUMENTS,
-     "inputs": ["2_cadrage", "3_deroule", "4_support_cours"], "web": False},
+     "inputs": ["2_cadrage", "3_deroule", "4_support_cours"], "web": True, "sources_officielles": False,
+     "key": "DOCUMENTS", "tier": "principal", "temperature": 0.5},
     {"name": "6_evaluation", "title": "Évaluation", "prompt": PROMPT_EVALUATION,
-     "inputs": ["2_cadrage", "4_support_cours"], "web": False},
+     "inputs": ["2_cadrage", "4_support_cours"], "web": False,
+     "key": "EVALUATION", "tier": "leger", "temperature": 0.3},
 ]
+# Le relecteur tourne sur un modèle différent des rédacteurs (limite l'auto-complaisance), en mode raisonnement.
+RELECTEUR = {"name": "relecteur", "title": "Relecteur", "prompt": PROMPT_RELECTEUR,
+             "key": "RELECTEUR", "tier": "leger", "temperature": 0, "reasoning_effort": "high"}
 AGENTS_BY_NAME = {a["name"]: a for a in AGENTS}
 TITRES = {"demande": "Demande du prof", **{a["name"]: a["title"] for a in AGENTS}}
 CRITERES = {
@@ -196,17 +225,85 @@ def build_input(outputs, agent, corrections=None):
     return "\n\n---\n\n".join(parts)
 
 
-def call_agent(client, system_prompt, user_content, temperature=0.4, response_format=None):
+# --------------------------------------------------------------------------- choix des modèles
+
+class Routeur:
+    """Mémorise les modèles remplacés par le modèle de secours et le modèle réellement utilisé par agent."""
+
+    def __init__(self):
+        self.substitutions = {}
+        self.utilises = {}
+
+    def reset(self):
+        self.substitutions.clear()
+        self.utilises.clear()
+
+
+ROUTEUR = Routeur()
+
+
+def model_for(cfg):
+    """Modèle configuré : MISTRAL_MODEL_<KEY> si défini, sinon le modèle du niveau (principal / leger)."""
+    return os.environ.get(f"MISTRAL_MODEL_{cfg['key']}") or MODELES[cfg["tier"]]
+
+
+def _error_body(exc):
+    return str(getattr(exc, "body", "") or exc).lower()
+
+
+def _is_model_error(exc):
+    status = getattr(exc, "status_code", None)
+    return status == 404 or (status in (400, 422) and "model" in _error_body(exc))
+
+
+def _is_reasoning_error(exc):
+    return getattr(exc, "status_code", None) in (400, 422) and "reasoning" in _error_body(exc)
+
+
+def call_with_fallback(cfg, request):
+    """Exécute `request(model, reasoning_effort)` en gérant :
+    - un modèle refusé par l'API → bascule sur le modèle de secours (mémorisé pour la suite) ;
+    - un `reasoning_effort` non supporté par le modèle → nouvel essai sans raisonnement.
+    """
+    model = model_for(cfg)
+    model = ROUTEUR.substitutions.get(model, model)
+    reasoning = cfg.get("reasoning_effort")
+    while True:
+        try:
+            result = request(model, reasoning)
+        except MistralError as exc:
+            if reasoning and _is_reasoning_error(exc):
+                print(f"  ({model} n'accepte pas reasoning_effort={reasoning} : nouvel essai sans raisonnement)")
+                reasoning = None
+                continue
+            secours = MODELES["secours"]
+            if _is_model_error(exc) and model != secours:
+                print(f"  (modèle {model} refusé par l'API [{exc.status_code}] : bascule sur {secours})")
+                ROUTEUR.substitutions[model] = secours
+                model = secours
+                continue
+            raise
+        ROUTEUR.utilises[cfg["name"]] = model + (f" (raisonnement : {reasoning})" if reasoning else "")
+        return result
+
+
+def call_agent(client, cfg, user_content, response_format=None):
     if not isinstance(user_content, str):
         user_content = content_to_text(user_content)
     messages = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": cfg["prompt"]},
         {"role": "user", "content": user_content},
     ]
-    kwargs = {"model": MODEL, "messages": messages, "temperature": temperature}
-    if response_format:
-        kwargs["response_format"] = response_format
-    response = client.chat.complete(**kwargs)
+
+    def request(model, reasoning):
+        kwargs = {"model": model, "messages": messages, "temperature": cfg["temperature"]}
+        if response_format:
+            kwargs["response_format"] = response_format
+        if reasoning:
+            kwargs["reasoning_effort"] = reasoning
+        return client.chat.complete(**kwargs)
+
+    response = call_with_fallback(cfg, request)
     return content_to_text(response.choices[0].message.content)
 
 
@@ -232,8 +329,25 @@ def collect_conversation_output(response):
     return "".join(textes), refs
 
 
-def format_sources(texte, refs):
-    """Ajoute à la fiche la liste des sources officielles et signale les sources non officielles."""
+def format_sources(texte, refs, officielles_seulement=True):
+    """Ajoute à la production la liste des sources consultées.
+
+    officielles_seulement=True : seules les sources eduscol / education.gouv sont retenues, les autres sont
+    signalées comme écartées. Sinon : toutes les sources consultées sont listées, et les URL citées dans le
+    texte qui ne proviennent pas de la recherche sont signalées comme non vérifiées.
+    """
+    if not officielles_seulement:
+        uniques = list({r["url"]: r for r in refs}.values())
+        consultees = {r["url"] for r in uniques}
+        lignes = ["## Sources consultées (recherche web)"]
+        lignes += [f"- {r['title']} : {r['url']}" for r in uniques] or ["- Aucune source trouvée par la recherche web."]
+        blocs = [texte.strip(), "\n".join(lignes)]
+        non_verifiees = sorted({u for u in find_urls(texte) if u not in consultees})
+        if non_verifiees:
+            blocs.append("\n".join(["## URL citées non issues de la recherche (à vérifier)"]
+                                   + [f"- {u}" for u in non_verifiees]))
+        return "\n\n".join(blocs)
+
     officielles, ecartees, vues = [], [], set()
     for ref in refs:
         if ref["url"] in vues:
@@ -257,29 +371,36 @@ def format_sources(texte, refs):
     return "\n\n".join(blocs)
 
 
-def call_sources_agent(client, user_content):
-    agent = client.beta.agents.create(
-        model=MODEL,
-        name="vibeprof-sources-officielles",
-        instructions=PROMPT_SOURCES,
-        tools=[{"type": "web_search"}],
-    )
-    try:
-        response = client.beta.conversations.start(agent_id=agent.id, inputs=user_content)
-        texte, refs = collect_conversation_output(response)
-        return format_sources(texte, refs)
-    finally:
+def call_web_agent(client, cfg, user_content):
+    def request(model, reasoning):
+        completion_args = {"temperature": cfg["temperature"]}
+        if reasoning:
+            completion_args["reasoning_effort"] = reasoning
+        agent = client.beta.agents.create(
+            model=model,
+            name=f"vibeprof-{cfg['name']}",
+            instructions=cfg["prompt"],
+            tools=[{"type": "web_search"}],
+            completion_args=completion_args,
+        )
         try:
-            client.beta.agents.delete(agent_id=agent.id)
-        except Exception as exc:  # le nettoyage ne doit pas faire échouer le cours
-            print(f"  (avertissement : suppression de l'agent {agent.id} impossible : {exc})")
+            return client.beta.conversations.start(agent_id=agent.id, inputs=user_content)
+        finally:
+            try:
+                client.beta.agents.delete(agent_id=agent.id)
+            except Exception as exc:  # le nettoyage ne doit pas faire échouer le cours
+                print(f"  (avertissement : suppression de l'agent {agent.id} impossible : {exc})")
+
+    response = call_with_fallback(cfg, request)
+    texte, refs = collect_conversation_output(response)
+    return format_sources(texte, refs, officielles_seulement=cfg.get("sources_officielles", True))
 
 
 def run_agent(client, agent, outputs, corrections=None):
     user_content = build_input(outputs, agent, corrections)
     if agent["web"]:
-        return call_sources_agent(client, user_content)
-    return call_agent(client, agent["prompt"], user_content)
+        return call_web_agent(client, agent, user_content)
+    return call_agent(client, agent, user_content)
 
 
 def dependents(name):
@@ -355,7 +476,7 @@ def run_relecture(client, outputs, tentatives=2):
     dossier = "\n\n---\n\n".join(f"## {TITRES[k]}\n\n{outputs[k]}" for k in ["demande"] + [a["name"] for a in AGENTS])
     derniere_erreur, raw = None, ""
     for _ in range(tentatives):
-        raw = call_agent(client, PROMPT_RELECTEUR, dossier, temperature=0,
+        raw = call_agent(client, RELECTEUR, dossier,
                          response_format={"type": "json_object"})
         try:
             return normalize_rapport(extract_json(raw)), raw
@@ -521,6 +642,16 @@ def build_docx(path, demande, outputs, rapports, livre):
             doc.add_paragraph(f"Renvoi vers : {r['retour_vers']}")
         for c in r.get("consignes_correction") or []:
             add_inline(doc.add_paragraph(style="List Bullet"), c)
+
+    if ROUTEUR.utilises:
+        doc.add_heading("Modèles utilisés", level=1)
+        table = doc.add_table(rows=1, cols=2)
+        table.style = "Table Grid"
+        table.cell(0, 0).text, table.cell(0, 1).text = "Agent", "Modèle"
+        for cfg in AGENTS + [RELECTEUR]:
+            if cfg["name"] in ROUTEUR.utilises:
+                cells = table.add_row().cells
+                cells[0].text, cells[1].text = cfg["title"], ROUTEUR.utilises[cfg["name"]]
     doc.save(path)
 
 
@@ -536,14 +667,19 @@ def make_client(api_key):
 
 
 def main():
-    global MODEL
     parser = argparse.ArgumentParser(description="Workflow agentique de création de cours (Mistral)")
     parser.add_argument("demande", help="Demande du prof, ex: 'Terminale bac pro Commerce, thème: la mondialisation, 2h, TD'")
     parser.add_argument("--outdir", default="output")
-    parser.add_argument("--model", default=MODEL, help=f"Modèle Mistral (défaut : {MODEL}, ou $MISTRAL_MODEL)")
+    parser.add_argument("--model", default=MODELES["principal"],
+                        help=f"Modèle principal (défaut : {MODELES['principal']}, ou $MISTRAL_MODEL)")
+    parser.add_argument("--model-leger", default=MODELES["leger"],
+                        help=f"Modèle léger : évaluation et relecture (défaut : {MODELES['leger']}, ou $MISTRAL_MODEL_LEGER)")
+    parser.add_argument("--model-secours", default=MODELES["secours"],
+                        help=f"Modèle de secours si un modèle est refusé (défaut : {MODELES['secours']}, ou $MISTRAL_MODEL_SECOURS)")
     parser.add_argument("--max-relectures", type=int, default=MAX_RELECTURES)
     args = parser.parse_args()
-    MODEL = args.model
+    MODELES.update(principal=args.model, leger=args.model_leger, secours=args.model_secours)
+    ROUTEUR.reset()
 
     api_key = os.environ.get("MISTRAL_API_KEY")
     if not api_key:
@@ -559,7 +695,9 @@ def main():
     def save(outputs, statut="en_cours", livre=False):
         final = {
             "demande": args.demande,
-            "modele": MODEL,
+            "modeles_configures": dict(MODELES),
+            "modeles_utilises": dict(ROUTEUR.utilises),
+            "substitutions": dict(ROUTEUR.substitutions),
             "statut": statut,
             "livre": livre,
             "dossier": outputs,

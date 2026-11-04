@@ -4,18 +4,39 @@ Workflow agentique (API Mistral) qui génère une séance d'histoire-géographie
 
 ## Fonctionnement
 
-| # | Agent | Reçoit |
-|---|-------|--------|
-| 1 | Référentiel officiel (recherche web, eduscol / education.gouv) | demande |
-| 2 | Cadrage | demande, référentiel |
-| 3 | Déroulé de séance | demande, cadrage |
-| 4 | Support de cours | cadrage, déroulé |
-| 5 | Documents élèves | cadrage, déroulé, support |
-| 6 | Évaluation | cadrage, support |
+| # | Agent | Reçoit | Modèle | Temp. |
+|---|-------|--------|--------|-------|
+| 1 | Référentiel officiel (recherche web, eduscol / education.gouv uniquement) | demande | principal | 0,1 |
+| 2 | Cadrage | demande, référentiel | principal | 0,2 |
+| 3 | Déroulé de séance | demande, cadrage | principal | 0,5 |
+| 4 | Support de cours | cadrage, déroulé | principal | 0,4 |
+| 5 | Documents élèves (recherche web, sources vérifiables) | cadrage, déroulé, support | principal | 0,5 |
+| 6 | Évaluation | cadrage, support | léger | 0,3 |
+| – | Relecteur (raisonnement `high`) | tout le dossier | léger | 0 |
 
 Un **relecteur** note ensuite le dossier sur 5 critères. Si la moyenne est sous 4/5, il renvoie vers l'agent fautif avec des consignes ; cet agent et ceux qui en dépendent sont régénérés (3 relectures max).
 
-Les sources trouvées par la recherche web sont listées en fin de référentiel : seules celles des domaines officiels sont retenues, les autres sont signalées comme écartées.
+Les sources trouvées par la recherche web sont listées à la fin des productions 1 et 5 :
+- référentiel : seules les sources des domaines officiels sont retenues, les autres sont signalées comme écartées ;
+- documents élèves : toutes les sources consultées sont listées, et les URL citées sans provenir de la recherche sont signalées « à vérifier ».
+
+## Modèles
+
+| Niveau | Défaut | Rôle | Surcharge |
+|--------|--------|------|-----------|
+| principal | `mistral-large-4` | rédaction, raisonnement pédagogique | `--model` / `$MISTRAL_MODEL` |
+| léger | `mistral-small-2603` | évaluation et relecture (modèle **différent** des rédacteurs, pour limiter l'auto-complaisance) | `--model-leger` / `$MISTRAL_MODEL_LEGER` |
+| secours | `mistral-large-2512` | utilisé automatiquement si un modèle est refusé par l'API (préversion retirée, identifiant inconnu) | `--model-secours` / `$MISTRAL_MODEL_SECOURS` |
+
+Chaque agent peut aussi être forcé individuellement : `MISTRAL_MODEL_REFERENTIEL`, `_CADRAGE`, `_DEROULE`, `_SUPPORT`, `_DOCUMENTS`, `_EVALUATION`, `_RELECTEUR`.
+
+Si un modèle n'accepte pas `reasoning_effort`, l'appel est refait sans raisonnement. Les modèles réellement utilisés sont tracés dans `cours_final.json` (`modeles_utilises`, `substitutions`) et en annexe du `.docx`.
+
+Pour vérifier les identifiants disponibles sur votre compte :
+
+```bash
+python -c "from mistralai.client import Mistral; import os; [print(m.id) for m in Mistral(api_key=os.environ['MISTRAL_API_KEY']).models.list().data]"
+```
 
 ## Installation
 
@@ -30,7 +51,7 @@ export MISTRAL_API_KEY=...
 python course_workflow.py "Terminale bac pro Commerce, thème : la mondialisation, 2h, TD"
 ```
 
-Options : `--outdir` (défaut `output`), `--model` (défaut `mistral-large-4` ou `$MISTRAL_MODEL`), `--max-relectures` (défaut 3).
+Options : `--outdir` (défaut `output`), `--model`, `--model-leger`, `--model-secours` (voir ci-dessus), `--max-relectures` (défaut 3).
 
 Résultat dans `output/<horodatage>/` :
 - `cours_final.docx` : le cours mis en forme, avec les rapports de relecture (et un avertissement si le seuil n'est pas atteint) ;
