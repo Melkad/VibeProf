@@ -707,7 +707,7 @@ def add_markdown(doc, text, base_level=1):
             flush()
         elif m := re.match(r"^(#{1,6})\s+(.*)$", stripped):
             flush()
-            level = min(base_level + len(m.group(1)), 9)
+            level = max(1, min(base_level + len(m.group(1)), 9))
             doc.add_heading(m.group(2).strip("# ").replace("**", ""), level=level)
         elif stripped.startswith("|"):
             flush()
@@ -736,26 +736,63 @@ def add_markdown(doc, text, base_level=1):
     flush()
 
 
-def build_docx(path, demande, outputs, rapports, livre):
-    doc = Document()
-    doc.add_heading("Cours généré", level=0)
+PARTIE_RE = re.compile(r"^#{1,3}\s*\**\s*partie\s+(él[eè]ve|eleve|professeur|prof|enseignant)\b.*$",
+                       re.IGNORECASE | re.MULTILINE)
+
+
+def split_parties(text):
+    """Sépare une production en (partie élève, partie professeur) d'après les titres « ## Partie élève » /
+    « ## Partie professeur ». Retourne (None, texte) si la production n'est pas séparée : par prudence, tout va
+    alors au professeur (pour ne jamais distribuer un corrigé aux élèves)."""
+    text = text or ""
+    marques = list(PARTIE_RE.finditer(text))
+    if not marques:
+        return None, text
+    eleve, prof = [], [text[:marques[0].start()].strip()]
+    for i, m in enumerate(marques):
+        fin = marques[i + 1].start() if i + 1 < len(marques) else len(text)
+        bloc = text[m.end():fin].strip()
+        (eleve if m.group(1).lower().startswith(("é", "e")) else prof).append(bloc)
+    eleve_txt = "\n\n".join(b for b in eleve if b)
+    return (eleve_txt or None), "\n\n".join(b for b in prof if b)
+
+
+def session_title(outputs, demande):
+    """Titre de la séance : premier titre « # … » du support de cours, sinon la demande."""
+    m = re.search(r"^#\s+(.+)$", outputs.get("4_support_cours", ""), re.MULTILINE)
+    titre = m.group(1).strip().replace("**", "") if m else ""
+    if not titre or titre.lower().startswith("titre de la séance"):
+        titre = demande
+    return titre
+
+
+def _warning(doc, livre, rapports):
+    if livre:
+        return
+    run = doc.add_paragraph().add_run(
+        f"⚠ ATTENTION : le seuil de livraison ({SEUIL_LIVRAISON}/5) n'a pas été atteint après "
+        f"{len(rapports)} relecture(s). Relisez attentivement ce cours avant de l'utiliser."
+    )
+    run.bold = True
+    run.font.color.rgb = RGBColor(0xC0, 0x00, 0x00)
+
+
+def _teacher_header(doc, titre, demande, livre, rapports):
+    doc.add_heading(titre, level=0)
     p = doc.add_paragraph()
     p.add_run("Demande : ").bold = True
     p.add_run(demande)
+    _warning(doc, livre, rapports)
 
-    if not livre:
-        avert = doc.add_paragraph()
-        run = avert.add_run(
-            f"⚠ ATTENTION : le seuil de livraison ({SEUIL_LIVRAISON}/5) n'a pas été atteint après "
-            f"{len(rapports)} relecture(s). Relisez attentivement ce cours avant de l'utiliser."
-        )
-        run.bold = True
-        run.font.color.rgb = RGBColor(0xC0, 0x00, 0x00)
 
-    for agent in AGENTS:
-        doc.add_heading(agent["title"], level=1)
-        add_markdown(doc, outputs.get(agent["name"], ""), base_level=1)
+def _student_header(doc, titre, sous_titre):
+    doc.add_heading(titre, level=0)
+    doc.add_paragraph(sous_titre).runs[0].italic = True
+    doc.add_paragraph("Nom : ______________________    Prénom : ______________________\n"
+                      "Classe : ____________    Date : ____________")
 
+
+def _add_rapports_et_modeles(doc, rapports):
     doc.add_heading("Rapports de relecture", level=1)
     for i, r in enumerate(rapports, 1):
         doc.add_heading(f"Itération {i} — score {r.get('score_global')}/5, livraison : {r.get('livraison')}", level=2)
@@ -786,7 +823,73 @@ def build_docx(path, demande, outputs, rapports, livre):
             if cfg["name"] in ROUTEUR.utilises:
                 cells = table.add_row().cells
                 cells[0].text, cells[1].text = cfg["title"], ROUTEUR.utilises[cfg["name"]]
+
+
+def add_section(doc, text, parent_level):
+    """Ajoute du markdown en calant son titre de plus haut niveau juste sous `parent_level`."""
+    niveaux = [len(m.group(1)) for m in re.finditer(r"^\s*(#{1,6})\s", text or "", re.MULTILINE)]
+    add_markdown(doc, text, base_level=parent_level + 1 - min(niveaux) if niveaux else parent_level)
+
+
+def build_docx(path, demande, outputs, rapports, livre):
+    """Dossier complet : toutes les productions, rapports et modèles (archive / consultation)."""
+    doc = Document()
+    _teacher_header(doc, "Cours généré — dossier complet", demande, livre, rapports)
+    for agent in AGENTS:
+        doc.add_heading(agent["title"], level=1)
+        add_section(doc, outputs.get(agent["name"], ""), parent_level=1)
+    _add_rapports_et_modeles(doc, rapports)
     doc.save(path)
+
+
+def build_fiche_professeur(path, demande, outputs, rapports, livre):
+    """Fiche de préparation : programme, cadrage, déroulé, corrigés, contrôle qualité."""
+    doc = Document()
+    _teacher_header(doc, f"Fiche professeur — {session_title(outputs, demande)}", demande, livre, rapports)
+    for name in ("1_referentiel_officiel", "2_cadrage", "3_deroule"):
+        doc.add_heading(TITRES[name], level=1)
+        add_section(doc, outputs.get(name, ""), parent_level=1)
+    for name, titre in (("5_documents_eleves", "Documents élèves — partie professeur"),
+                        ("6_evaluation", "Évaluation — partie professeur")):
+        eleve, prof = split_parties(outputs.get(name, ""))
+        doc.add_heading(titre, level=1)
+        if eleve is None:
+            doc.add_paragraph("La production n'a pas séparé partie élève et partie professeur : "
+                              "elle figure en entier ici et n'a pas été mise dans le document élève.").runs[0].italic = True
+        add_section(doc, prof, parent_level=1)
+    _add_rapports_et_modeles(doc, rapports)
+    doc.save(path)
+
+
+def build_document_eleve(path, titre, sous_titre, contenu):
+    doc = Document()
+    _student_header(doc, titre, sous_titre)
+    if contenu:
+        add_section(doc, contenu, parent_level=0)
+    else:
+        doc.add_paragraph("Contenu indisponible : voir la fiche professeur.").runs[0].italic = True
+    doc.save(path)
+
+
+def build_deliverables(outdir, demande, outputs, rapports, livre):
+    """Écrit les documents livrés et retourne leur liste (chemins)."""
+    outdir = Path(outdir)
+    titre = session_title(outputs, demande)
+    support = re.sub(r"^#\s+.+\n?", "", outputs.get("4_support_cours", "").strip(), count=1)
+    docs_eleve, _ = split_parties(outputs.get("5_documents_eleves", ""))
+    eval_eleve, _ = split_parties(outputs.get("6_evaluation", ""))
+    fichiers = {
+        "1_fiche_professeur.docx": lambda p: build_fiche_professeur(p, demande, outputs, rapports, livre),
+        "2_cours_eleve.docx": lambda p: build_document_eleve(p, titre, "Cours", support),
+        "3_documents_eleves.docx": lambda p: build_document_eleve(p, titre, "Documents et activités", docs_eleve),
+        "4_evaluation_eleve.docx": lambda p: build_document_eleve(p, titre, "Évaluation", eval_eleve),
+        "cours_complet.docx": lambda p: build_docx(p, demande, outputs, rapports, livre),
+    }
+    chemins = []
+    for nom, build in fichiers.items():
+        build(outdir / nom)
+        chemins.append(outdir / nom)
+    return chemins
 
 
 # --------------------------------------------------------------------------- main
@@ -876,11 +979,13 @@ def main():
                 break
 
     save(outputs, statut=statut, livre=livre)
-    build_docx(outdir / "cours_final.docx", args.demande, outputs, rapports, livre)
+    fichiers = build_deliverables(outdir, args.demande, outputs, rapports, livre)
 
     if not livre:
         print(f"⚠ Seuil de {SEUIL_LIVRAISON}/5 non atteint : cours à relire attentivement.")
-    print(f"Terminé en {len(rapports)} relecture(s). Résultat : {outdir}/cours_final.docx")
+    print(f"Terminé en {len(rapports)} relecture(s). Documents dans {outdir}/ :")
+    for f in fichiers:
+        print(f"  - {f.name}")
 
 
 if __name__ == "__main__":

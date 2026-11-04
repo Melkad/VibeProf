@@ -56,8 +56,17 @@ python course_workflow.py "Terminale bac pro Commerce, thème : la mondialisatio
 Options : `--outdir` (défaut `output`), `--model`, `--model-leger`, `--model-secours` (voir ci-dessus), `--max-relectures` (défaut 3).
 
 Résultat dans `output/<horodatage>/` :
-- `cours_final.docx` : le cours mis en forme, avec les rapports de relecture (et un avertissement si le seuil n'est pas atteint) ;
-- `cours_final.json` : toutes les productions, sauvegardé après chaque étape (rien n'est perdu en cas d'erreur).
+
+| Fichier | Pour qui | Contenu |
+|---------|----------|---------|
+| `1_fiche_professeur.docx` | professeur | programme officiel et sources, cadrage, déroulé, corrigés des documents et de l'évaluation, rapports de relecture, modèles utilisés |
+| `2_cours_eleve.docx` | élèves | support de cours (« Ce que je retiens », cours, vocabulaire, schéma, frise/carte) |
+| `3_documents_eleves.docx` | élèves | documents et activités (partie élève uniquement) |
+| `4_evaluation_eleve.docx` | élèves | quiz, question de réflexion, auto-évaluation (partie élève uniquement) |
+| `cours_complet.docx` | archive | tout le dossier dans un seul fichier |
+| `cours_final.json` | – | toutes les productions brutes, sauvegardé après chaque étape |
+
+Les documents élèves ont un en-tête Nom / Prénom / Classe / Date et ne contiennent jamais de corrigé : si un agent n'a pas séparé « Partie élève » et « Partie professeur », sa production est placée en entier dans la fiche professeur. L'avertissement « seuil non atteint » n'apparaît que côté professeur.
 
 ## Tests
 

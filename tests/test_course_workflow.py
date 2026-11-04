@@ -348,5 +348,84 @@ class DocxTests(RouteurReset):
         self.assertIn(cw.MODELES["leger"], cells)
 
 
+
+def texts_of(path):
+    doc = Document(path)
+    cells = [c.text for t in doc.tables for row in t.rows for c in row.cells]
+    return "\n".join([p.text for p in doc.paragraphs] + cells), doc
+
+
+class DecoupageTests(RouteurReset):
+    OUTPUTS = {
+        "demande": "Terminale bac pro, mondialisation, 2h",
+        "1_referentiel_officiel": "## Programme applicable\nBO n°1\n\n## Sources officielles consultées\n- P : https://eduscol.education.fr/x",
+        "2_cadrage": "## Objectifs d'apprentissage\n- Situer les flux",
+        "3_deroule": "## Déroulé\n| Horaire | Durée |\n|---|---|\n| 0-10 | 10 |\n\n**Total : 110 min**",
+        "4_support_cours": "# La mondialisation des échanges\n\n## Ce que je retiens\n- Les flux augmentent",
+        "5_documents_eleves": ("## Partie élève\n### Doc 1 — Un porte-conteneurs\nTexte DOC-ELEVE\n### Questions\n1. Relève\n"
+                               "## Partie professeur\n### Corrigé\nREPONSE-SECRETE-DOCS\n\n"
+                               "## Sources consultées (recherche web)\n- G : https://gallica.bnf.fr/1"),
+        "6_evaluation": ("## Partie élève\n### Quiz\n1. QUESTION-EVAL\n"
+                         "## Partie professeur\n### Corrigé\nREPONSE-SECRETE-EVAL"),
+    }
+
+    def build(self, outputs, livre=True):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        rapports = [cw.normalize_rapport(RAPPORT_OK)]
+        chemins = cw.build_deliverables(self.tmp.name, outputs["demande"], outputs, rapports, livre)
+        return {c.name: texts_of(c) for c in chemins}
+
+    def test_split_parties(self):
+        eleve, prof = cw.split_parties(self.OUTPUTS["5_documents_eleves"])
+        self.assertIn("DOC-ELEVE", eleve)
+        self.assertNotIn("REPONSE-SECRETE", eleve)
+        self.assertIn("REPONSE-SECRETE-DOCS", prof)
+        self.assertIn("gallica", prof)  # les sources ajoutées en fin de production restent côté prof
+        self.assertEqual(cw.split_parties("## Partie Eleve\nA\n## **Partie professeur**\nB"), ("A", "B"))
+        self.assertEqual(cw.split_parties("pas de parties"), (None, "pas de parties"))
+
+    def test_fichiers_produits(self):
+        docs = self.build(self.OUTPUTS)
+        self.assertEqual(sorted(docs), ["1_fiche_professeur.docx", "2_cours_eleve.docx",
+                                        "3_documents_eleves.docx", "4_evaluation_eleve.docx", "cours_complet.docx"])
+
+    def test_aucun_corrige_cote_eleve(self):
+        docs = self.build(self.OUTPUTS)
+        for nom in ("2_cours_eleve.docx", "3_documents_eleves.docx", "4_evaluation_eleve.docx"):
+            texte, _ = docs[nom]
+            self.assertNotIn("REPONSE-SECRETE", texte, nom)
+            self.assertNotIn("Rapports de relecture", texte, nom)
+            self.assertNotIn("Total : 110 min", texte, nom)
+            self.assertIn("Nom :", texte)
+            self.assertIn("La mondialisation des échanges", texte)
+        self.assertIn("DOC-ELEVE", docs["3_documents_eleves.docx"][0])
+        self.assertIn("QUESTION-EVAL", docs["4_evaluation_eleve.docx"][0])
+        self.assertIn("Les flux augmentent", docs["2_cours_eleve.docx"][0])
+
+    def test_fiche_professeur(self):
+        texte, doc = self.build(self.OUTPUTS)["1_fiche_professeur.docx"]
+        for attendu in ("Fiche professeur — La mondialisation des échanges", "BO n°1", "Situer les flux",
+                        "REPONSE-SECRETE-DOCS", "REPONSE-SECRETE-EVAL", "Rapports de relecture"):
+            self.assertIn(attendu, texte)
+        self.assertNotIn("DOC-ELEVE", texte)
+        # titres calés : les sous-parties du corrigé sont sous le titre de section (niveau 1)
+        niveaux = {p.text: p.style.name for p in doc.paragraphs if p.style.name.startswith("Heading")}
+        self.assertEqual(niveaux["Évaluation — partie professeur"], "Heading 1")
+        self.assertEqual(niveaux["Corrigé"], "Heading 2")
+
+    def test_production_non_separee_reste_chez_le_prof(self):
+        outputs = dict(self.OUTPUTS, **{"6_evaluation": "### Quiz\n1. Q\n### Corrigé\nREPONSE-NON-SEPAREE"})
+        docs = self.build(outputs)
+        self.assertNotIn("REPONSE-NON-SEPAREE", docs["4_evaluation_eleve.docx"][0])
+        self.assertIn("Contenu indisponible", docs["4_evaluation_eleve.docx"][0])
+        self.assertIn("REPONSE-NON-SEPAREE", docs["1_fiche_professeur.docx"][0])
+
+    def test_avertissement_seulement_cote_prof(self):
+        docs = self.build(self.OUTPUTS, livre=False)
+        self.assertIn("ATTENTION", docs["1_fiche_professeur.docx"][0])
+        self.assertNotIn("ATTENTION", docs["2_cours_eleve.docx"][0])
+
+
 if __name__ == "__main__":
     unittest.main()
