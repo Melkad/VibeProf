@@ -60,6 +60,16 @@ class CadreOfficielTests(unittest.TestCase):
         for cfg in cw.AGENTS + [cw.RELECTEUR]:
             self.assertIn("CADRE OFFICIEL DE RÉFÉRENCE", cfg["prompt"], cfg["key"])
 
+    def test_contenu_verifie_livre(self):
+        fiches = {f["fichier"]: f for f in cw.CADRE_OFFICIEL}
+        verifiees = [n for n, f in fiches.items() if f["statut"] == "vérifié"]
+        self.assertGreaterEqual(len(verifiees), 5)
+        self.assertIn("BO n° 24 du 13 juin 2024", fiches["01_sources_officielles.md"]["corps"])
+        self.assertIn("Contextualiser", fiches["03_capacites.md"]["corps"])
+        self.assertIn("La vie démocratique : débat, délibération et prise de décision", fiches["06_emc.md"]["corps"])
+        self.assertIn("EMC", cw.PROMPT_SOURCES)  # consigne propre à la structure du programme d'EMC
+        self.assertIn("06_emc.md", cw.PROMPT_EVALUATION)
+
     def test_consignes_de_conformite(self):
         self.assertIn("## Recommandations officielles de mise en œuvre", cw.PROMPT_SOURCES)
         self.assertIn("## Attendus de l'examen", cw.PROMPT_SOURCES)

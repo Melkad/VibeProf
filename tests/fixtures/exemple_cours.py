@@ -1,27 +1,29 @@
-"""Exemple réaliste de productions d'agents (format des prompts), pour tester et prévisualiser le rendu."""
+"""Exemple réaliste de productions d'agents (format des prompts), pour tester et prévisualiser le rendu.
 
-DEMANDE = "Terminale bac pro Commerce, géographie, thème : la France et l'Union européenne dans la mondialisation, 2h, TD"
+Le thème et le programme cités sont réels ; le reste du contenu (documents, chiffres, recommandations) est un exemple
+de test, non vérifié."""
+
+DEMANDE = "Seconde bac pro Métiers du commerce et de la vente, géographie, thème : des réseaux de production et d'échanges mondialisés, 2 h, Étude de documents (TD)"
 
 OUTPUTS = {
     "demande": DEMANDE,
     "1_referentiel_officiel": """## Programme applicable
-Classe de terminale professionnelle, géographie. Programme d'histoire-géographie et EMC de la voie professionnelle (BO spécial n° 1 du 6 février 2020). URL : https://eduscol.education.fr/document/25906/download
+Classe de seconde professionnelle, géographie. Programme d'histoire-géographie de seconde professionnelle (arrêté du 3 avril 2019, BO du 11 avril 2019). URL : https://eduscol.education.fr/document/25906/download
 Vérification : aucun programme plus récent pour cette classe sur la page Eduscol de la voie professionnelle.
 
 ## Thème du programme
-**Thème 1 : La France et l'Union européenne dans la mondialisation.** Le thème demandé correspond exactement à un intitulé du programme.
+**Production mondiale et circulation des personnes, des biens et des informations — thème « Des réseaux de production et d'échanges mondialisés ».** Le thème demandé correspond exactement à un intitulé du programme.
 
 ## Notions et mots-clés
-- Mondialisation
-- Flux
-- Interface
-- Façade maritime
-- Puissance
+- Révolution des transports
+- Acteurs
+- Plate-forme multimodale
+- Entreprise multinationale
 
 ## Capacités
-- Situer et caractériser les principaux flux de la mondialisation.
-- Réaliser une production graphique à partir d'un document ou d'une situation.
-- Mettre un document en relation avec ses connaissances.
+- Se repérer : nommer et localiser les grands repères géographiques ainsi que les principaux processus étudiés.
+- Exploiter les outils spécifiques aux disciplines : compléter ou réaliser un croquis simple de géographie.
+- Contextualiser : situer un document dans son contexte pour l'expliquer.
 
 ## Repères
 - *Principales façades maritimes européennes*
@@ -29,31 +31,30 @@ Vérification : aucun programme plus récent pour cette classe sur la page Edusc
 - Les grandes métropoles françaises et européennes
 
 ## Commentaire du programme
-Le thème permet de comprendre comment la France et l'Union européenne s'insèrent dans la mondialisation, à travers leurs atouts (ports, métropoles, entreprises) et leurs fragilités. URL : https://eduscol.education.fr/document/25906/download
+Le thème étudie les réseaux de production et d'échanges à l'échelle mondiale et le rôle des transports dans la mondialisation (résumé de test). URL : https://eduscol.education.fr/document/25906/download
 
 ## Recommandations officielles de mise en œuvre
-- Partir d'une étude de cas concrète (un produit, un port) avant de généraliser. URL : https://eduscol.education.fr/document/25924/download
-- Faire réaliser une production graphique (croquis, schéma). URL : https://eduscol.education.fr/document/25924/download
-- Relier le thème à l'expérience des élèves et à leur futur métier. URL : https://eduscol.education.fr/document/25924/download
+- En seconde, consolider les acquis du cycle 4 ; identifier l'idée générale d'un document avant toute analyse critique. URL : https://eduscol.education.fr/document/25924/download
+- Privilégier en seconde la tâche cartographique simple (compléter un croquis simple). URL : https://eduscol.education.fr/document/25924/download
+- Éclairer les mutations de l'économie que les élèves appréhendent en période de formation en milieu professionnel. URL : https://eduscol.education.fr/document/25906/download
 
 ## Attendus de l'examen
-- Mobiliser des repères et des notions pour répondre à une question sur un document.
-- Réaliser une courte production écrite ou graphique. URL : https://www.education.gouv.fr/bo/20/Special7/MENE2019454N.htm
+- Épreuve écrite E5/U52 en terminale (2 h 30) : questions sur repères et notions, dossier documentaire avec croquis à compléter, texte d'une dizaine de lignes. URL : https://www.education.gouv.fr/sites/default/files/document/baccalaureat-professionnel-2026-histoire-geographie-emc-516839.pdf
 
 ## Ressources d'accompagnement officielles
-- Ressources pour la classe de terminale professionnelle — géographie : https://eduscol.education.fr/document/25924/download
+- Approche par compétences : mise en œuvre et progressivité sur le cycle bac professionnel : https://eduscol.education.fr/document/25924/download
 
 ## Points sans source officielle
 - Aucun.
 
 ## Sources officielles consultées
-- Programme HG-EMC terminale bac pro : https://eduscol.education.fr/document/25906/download
+- Programme d'histoire-géographie de seconde professionnelle : https://eduscol.education.fr/document/25906/download
 - Ressources d'accompagnement : https://eduscol.education.fr/document/25924/download""",
     "2_cadrage": """## Classe, thème et spécialité
-Terminale bac pro Métiers du commerce et de la vente. Géographie, thème 1 : La France et l'Union européenne dans la mondialisation. Séance de 2 heures (110 minutes effectives) en TD.
+Seconde bac pro Métiers du commerce et de la vente. Géographie, thème « Des réseaux de production et d'échanges mondialisés ». Séance de 2 heures (110 minutes effectives) en TD.
 
 ## Place dans la progression (proposition)
-Première séance du thème, en début d'année, avant l'étude des métropoles.
+Première séance du thème de géographie, après le thème d'histoire sur l'expansion du monde connu.
 
 ## Objectifs d'apprentissage
 1. **Situer** les principales façades maritimes et ports européens sur une carte (capacité : situer et caractériser les flux).
@@ -112,10 +113,10 @@ Texte à trous complété collectivement en fin de séance.
 ## Conformité aux recommandations officielles
 | Recommandation officielle | Source | Application dans la séance |
 |---|---|---|
-| Partir d'une étude de cas concrète | Ressource Eduscol terminale | Trajet d'un téléviseur (Doc 1) avant les ports européens |
-| Production graphique | Ressource Eduscol terminale | Croquis des ports et de la façade (20 min) |
-| Lien avec le métier | Ressource Eduscol terminale | Exercice du vendeur, accroche sur les étiquettes |""",
-    "4_support_cours": """# La France et l'Union européenne dans la mondialisation
+| Consolider les acquis du cycle 4, identifier l'idée générale d'un document | Ressource Eduscol 25924 | Trajet d'un téléviseur (Doc 1) avant les ports européens |
+| Tâche cartographique simple en seconde | Ressource Eduscol 25924 | Croquis des ports et de la façade (20 min) |
+| Lien avec la formation professionnelle | Préambule du programme | Exercice du vendeur, accroche sur les étiquettes |""",
+    "4_support_cours": """# Le voyage d'un produit mondialisé
 
 ## Ce que je retiens
 - La **mondialisation** est la mise en relation des différentes régions du monde par des échanges.
@@ -228,9 +229,9 @@ En quelques lignes, expliquez pourquoi les ports sont indispensables dans la mon
 ### Correspondance questions / objectifs
 | Question | Objectif évalué | Capacité du programme |
 |---|---|---|
-| 1, 3 | Décrire un flux | Situer et caractériser les principaux flux |
-| 2, 5 | Situer les ports | Maîtriser et utiliser des repères chronologiques et spatiaux |
-| 4, réflexion | Expliquer le rôle d'interface | Mettre un document en relation avec ses connaissances |
+| 1, 3 | Décrire un flux | Mener et construire une démarche géographique : décrire une situation géographique |
+| 2, 5 | Situer les ports | Se repérer : nommer et localiser les grands repères géographiques |
+| 4, réflexion | Expliquer le rôle d'interface | Contextualiser : situer un document dans son contexte pour l'expliquer |
 
 ### Critères de réussite
 - Vocabulaire utilisé correctement.

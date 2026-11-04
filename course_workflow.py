@@ -106,6 +106,7 @@ Règles strictes :
 - Identifie la classe (CAP, seconde, première ou terminale bac pro), la discipline (histoire, géographie ou EMC) et le thème du programme qui correspond à la demande.
 - Vérifie que le programme cité est bien celui en vigueur pour cette classe à la date d'aujourd'hui : un programme plus récent publié au Bulletin officiel peut avoir remplacé celui de 2019-2020. Indique la date du texte.
 - Recopie mot pour mot les notions et mots-clés, les capacités et les repères du thème : ne reformule pas, les agents suivants s'appuieront sur ces formulations exactes.
+- En EMC, le programme a une autre structure : remplace les sections « Notions et mots-clés », « Capacités » et « Repères » par « Attendus et objectifs », « Notions abordées », « Contenus d'enseignement » et « Démarches et situations d'apprentissage possibles » de la partie concernée, avec l'horaire indiqué pour la voie professionnelle.
 - Cherche la ressource d'accompagnement Eduscol du thème et relève ses recommandations de mise en œuvre (démarches, types de documents, points de vigilance) : la séance devra les appliquer.
 - Relève ce que l'épreuve de l'examen préparé (CAP ou bac pro) évalue dans cette discipline.
 - Si le thème demandé ne correspond pas exactement à un intitulé du programme, dis-le et indique le ou les thèmes officiels les plus proches.

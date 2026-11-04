@@ -14,8 +14,11 @@ Après modification d'une fiche, relancez simplement VibeProf : les fiches sont 
 
 | Fiche | Contenu | Statut |
 |---|---|---|
-| `01_sources_officielles.md` | où chercher en priorité | partiel |
-| `02_structure_programmes.md` | organisation des programmes, vocabulaire | partiel |
-| `03_capacites.md` | tableau officiel des capacités | à compléter |
-| `04_examens.md` | définition des épreuves (CAP, bac pro) | partiel |
-| `05_mise_en_oeuvre.md` | recommandations des ressources d'accompagnement | à compléter |
+| `01_sources_officielles.md` | textes en vigueur et URL (HG, EMC 2024, ressources, sujet 2026) | vérifié |
+| `02_structure_programmes.md` | organisation des programmes, thèmes par classe | vérifié |
+| `03_capacites.md` | tableau officiel des capacités | vérifié |
+| `04_examens.md` | épreuve écrite (sujet 2026) et oral de contrôle | partiel |
+| `05_mise_en_oeuvre.md` | progressivité, analyse de documents, cartographie, récit | vérifié |
+| `06_emc.md` | programme d'EMC 2024 : thèmes et méthodes | vérifié |
+
+Dernière vérification : 04/11/2026, à partir des documents officiels téléchargés (Eduscol, education.gouv.fr).
