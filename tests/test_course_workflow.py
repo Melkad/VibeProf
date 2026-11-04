@@ -1,4 +1,5 @@
 import json
+import re
 import unittest.mock
 import sys
 import tempfile
@@ -7,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
 
 import course_workflow as cw  # noqa: E402
 from docx import Document  # noqa: E402
@@ -321,7 +323,8 @@ class DocxTests(RouteurReset):
         styles = [p.style.name for p in doc.paragraphs]
         self.assertEqual(styles.count("List Bullet"), 2)
         self.assertEqual(styles.count("List Bullet 2"), 1)
-        self.assertEqual(styles.count("List Number"), 2)
+        numeros = [p.text for p in doc.paragraphs if re.match(r"\d+\.\t", p.text)]
+        self.assertEqual(numeros, ["1.\tpremier", "2.\tsecond"])
         self.assertIn("Heading 2", styles)
         self.assertIn("Heading 3", styles)
         texte = next(p for p in doc.paragraphs if "gras" in p.text)
@@ -339,13 +342,12 @@ class DocxTests(RouteurReset):
             cw.build_docx(path, "demande", out, rapports, livre=False)
             doc = Document(path)
         textes = [p.text for p in doc.paragraphs]
-        self.assertTrue(any("ATTENTION" in t for t in textes))
+        cellules = [c.text for t in doc.tables for row in t.rows for c in row.cells]
+        self.assertTrue(any("Seuil de qualité" in t for t in cellules))
         self.assertIn("Référentiel officiel", textes)
         self.assertNotIn("1_referentiel_officiel", textes)
-        self.assertIn("Modèles utilisés", textes)
+        self.assertIn("Contrôle qualité", textes)
         self.assertTrue(any("Renvoi vers l'agent 3 (Déroulé de séance)" in t for t in textes))
-        cells = [c.text for t in doc.tables for row in t.rows for c in row.cells]
-        self.assertIn(cw.MODELES["leger"], cells)
 
 
 
@@ -397,7 +399,7 @@ class DecoupageTests(RouteurReset):
             self.assertNotIn("REPONSE-SECRETE", texte, nom)
             self.assertNotIn("Rapports de relecture", texte, nom)
             self.assertNotIn("Total : 110 min", texte, nom)
-            self.assertIn("Nom :", texte)
+            self.assertIn("Nom, prénom :", texte)
             self.assertIn("La mondialisation des échanges", texte)
         self.assertIn("DOC-ELEVE", docs["3_documents_eleves.docx"][0])
         self.assertIn("QUESTION-EVAL", docs["4_evaluation_eleve.docx"][0])
@@ -405,14 +407,15 @@ class DecoupageTests(RouteurReset):
 
     def test_fiche_professeur(self):
         texte, doc = self.build(self.OUTPUTS)["1_fiche_professeur.docx"]
-        for attendu in ("Fiche professeur — La mondialisation des échanges", "BO n°1", "Situer les flux",
-                        "REPONSE-SECRETE-DOCS", "REPONSE-SECRETE-EVAL", "Rapports de relecture"):
+        for attendu in ("La mondialisation des échanges\nFICHE PROFESSEUR", "BO n°1", "Situer les flux",
+                        "REPONSE-SECRETE-DOCS", "REPONSE-SECRETE-EVAL", "Contrôle qualité", "Score final : 4.4/5"):
             self.assertIn(attendu, texte)
         self.assertNotIn("DOC-ELEVE", texte)
         # titres calés : les sous-parties du corrigé sont sous le titre de section (niveau 1)
         niveaux = {p.text: p.style.name for p in doc.paragraphs if p.style.name.startswith("Heading")}
-        self.assertEqual(niveaux["Évaluation — partie professeur"], "Heading 1")
-        self.assertEqual(niveaux["Corrigé"], "Heading 2")
+        self.assertEqual(niveaux["3. Corrigés"], "Heading 1")
+        self.assertEqual(niveaux["Évaluation"], "Heading 2")
+        self.assertEqual(niveaux["Corrigé"], "Heading 3")
 
     def test_production_non_separee_reste_chez_le_prof(self):
         outputs = dict(self.OUTPUTS, **{"6_evaluation": "### Quiz\n1. Q\n### Corrigé\nREPONSE-NON-SEPAREE"})
@@ -423,8 +426,65 @@ class DecoupageTests(RouteurReset):
 
     def test_avertissement_seulement_cote_prof(self):
         docs = self.build(self.OUTPUTS, livre=False)
-        self.assertIn("ATTENTION", docs["1_fiche_professeur.docx"][0])
-        self.assertNotIn("ATTENTION", docs["2_cours_eleve.docx"][0])
+        self.assertIn("Seuil de qualité", docs["1_fiche_professeur.docx"][0])
+        for nom in ("2_cours_eleve.docx", "3_documents_eleves.docx", "4_evaluation_eleve.docx"):
+            self.assertNotIn("Seuil de qualité", docs[nom][0])
+
+
+
+class RenduEleveTests(RouteurReset):
+    def render(self, md):
+        doc = Document()
+        cw.Rendu(eleve=True).markdown(doc, md)
+        return doc
+
+    @staticmethod
+    def lignes_reponse(doc):
+        return sum(1 for p in doc.paragraphs if p.text == "\t")
+
+    def test_lignes_de_reponse_et_qcm(self):
+        doc = self.render("## Quiz\n1. Question ouverte ?\n2. QCM ?\n   - a) oui\n   - b) non\n3. Autre ?")
+        textes = [p.text for p in doc.paragraphs]
+        self.assertIn("☐  oui", textes)
+        self.assertIn("☐  non", textes)
+        self.assertEqual(self.lignes_reponse(doc), 2 * cw.Rendu.LIGNES_PAR_QUESTION)  # pas de lignes sous le QCM
+
+    def test_lignes_reflexion(self):
+        doc = self.render("## Question de réflexion\nExpliquez pourquoi.\n\n## Auto-évaluation\nGrille")
+        self.assertEqual(self.lignes_reponse(doc), cw.Rendu.LIGNES_SECTION["reflexion"])
+
+    def test_pas_de_lignes_cote_prof(self):
+        doc = Document()
+        cw.Rendu().markdown(doc, "## Quiz\n1. Question ?\n## Question de réflexion\nTexte")
+        self.assertEqual(self.lignes_reponse(doc), 0)
+
+    def test_numerotation_ne_continue_pas(self):
+        doc = Document()
+        cw.add_markdown(doc, "1. a\n2. b\n\n## Suite\n1. c")
+        self.assertEqual([p.text for p in doc.paragraphs if "\t" in p.text], ["1.\ta", "2.\tb", "1.\tc"])
+
+    def test_encadres_et_cadre_de_dessin(self):
+        from exemple_cours import DEMANDE, OUTPUTS
+        with tempfile.TemporaryDirectory() as d:
+            cw.build_deliverables(d, DEMANDE, OUTPUTS, [], True)
+            docs = Document(Path(d) / "3_documents_eleves.docx")
+            cours = Document(Path(d) / "2_cours_eleve.docx")
+        encadres = [t.cell(0, 0).paragraphs[0].text for t in docs.tables if len(t.columns) == 1]
+        self.assertEqual(encadres[:3], ["Doc 1 — Le voyage d'un conteneur",
+                                        "Doc 2 — Les grandes routes maritimes mondiales",
+                                        "Doc 3 — Le trafic des principaux ports européens"])
+        self.assertTrue(any(t.rows[0].height is not None for t in docs.tables))  # cadre pour la carte
+        self.assertIn("Ce que je retiens", [t.cell(0, 0).paragraphs[0].text for t in cours.tables])
+
+    def test_rendu_depuis_json(self):
+        from exemple_cours import DEMANDE, OUTPUTS
+        with tempfile.TemporaryDirectory() as d:
+            source = Path(d) / "cours_final.json"
+            source.write_text(json.dumps({"demande": DEMANDE, "dossier": OUTPUTS, "rapports_relecture": [],
+                                          "livre": True, "modeles_utilises": {}}), encoding="utf-8")
+            with unittest.mock.patch.object(sys, "argv", ["x", "--rendu", str(source)]):
+                cw.main()
+            self.assertTrue((Path(d) / "2_cours_eleve.docx").exists())
 
 
 if __name__ == "__main__":

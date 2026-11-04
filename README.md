@@ -59,14 +59,20 @@ Résultat dans `output/<horodatage>/` :
 
 | Fichier | Pour qui | Contenu |
 |---------|----------|---------|
-| `1_fiche_professeur.docx` | professeur | programme officiel et sources, cadrage, déroulé, corrigés des documents et de l'évaluation, rapports de relecture, modèles utilisés |
-| `2_cours_eleve.docx` | élèves | support de cours (« Ce que je retiens », cours, vocabulaire, schéma, frise/carte) |
-| `3_documents_eleves.docx` | élèves | documents et activités (partie élève uniquement) |
-| `4_evaluation_eleve.docx` | élèves | quiz, question de réflexion, auto-évaluation (partie élève uniquement) |
-| `cours_complet.docx` | archive | tout le dossier dans un seul fichier |
+| `1_fiche_professeur.docx` | professeur | ~3 pages : objectifs et cadrage, déroulé, corrigés ; en annexe : référence du programme, sources, synthèse du contrôle qualité |
+| `2_cours_eleve.docx` | élèves | ~2 pages : « Ce que je retiens » encadré, cours, vocabulaire, schéma, frise/carte |
+| `3_documents_eleves.docx` | élèves | ~2 pages : documents encadrés, questions avec lignes de réponse, cadre pour la carte à compléter, exercice, coup de pouce |
+| `4_evaluation_eleve.docx` | élèves | 1 page : quiz (cases à cocher pour les QCM, lignes de réponse), question de réflexion, auto-évaluation |
+| `cours_complet.docx` | archive | tout le dossier, programme complet et toutes les relectures en détail |
 | `cours_final.json` | – | toutes les productions brutes, sauvegardé après chaque étape |
 
-Les documents élèves ont un en-tête Nom / Prénom / Classe / Date et ne contiennent jamais de corrigé : si un agent n'a pas séparé « Partie élève » et « Partie professeur », sa production est placée en entier dans la fiche professeur. L'avertissement « seuil non atteint » n'apparaît que côté professeur.
+Les documents élèves ont un en-tête Nom / Classe / Date, une police plus grande et ne contiennent jamais de corrigé : si un agent n'a pas séparé « Partie élève » et « Partie professeur », sa production est placée en entier dans la fiche professeur. L'avertissement « seuil non atteint » n'apparaît que côté professeur. Les longueurs sont cadrées dans les prompts (nombre de mots, de questions, de lignes de tableau) et le relecteur pénalise les documents trop longs.
+
+Pour retoucher la mise en page sans relancer les agents (aucun appel à l'API) :
+
+```bash
+python course_workflow.py --rendu output/<horodatage>/cours_final.json
+```
 
 ## Tests
 

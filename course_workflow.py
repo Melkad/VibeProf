@@ -8,7 +8,11 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from docx import Document
-from docx.shared import Pt, RGBColor
+from docx.enum.table import WD_ROW_HEIGHT_RULE
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT, WD_TAB_LEADER
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Cm, Pt, RGBColor
 
 from mistralai.client import Mistral
 from mistralai.client.errors import MistralError
@@ -32,6 +36,7 @@ CONTEXTE_COMMUN = """Contexte commun à tous les agents du workflow :
 - Discipline : histoire-géographie et enseignement moral et civique (HG-EMC). Le programme d'HG-EMC est commun à toutes les spécialités professionnelles : la spécialité de la classe (commerce, électricité, soins…) sert uniquement à choisir des exemples et des mises en situation proches du métier préparé.
 - Vocabulaire institutionnel : l'HG-EMC suit un « programme » publié au Bulletin officiel, organisé en thèmes. Chaque thème comporte des « notions et mots-clés », des « capacités », des « repères » et un « commentaire ». N'emploie pas « socle commun » (il concerne la scolarité obligatoire, pas le lycée) ni « référentiel » pour l'HG-EMC (le référentiel désigne le diplôme professionnel).
 - Format de sortie : français, markdown simple uniquement (titres ## et ###, listes à puces, listes numérotées, tableaux markdown, **gras**). Pas de HTML, pas de blocs de code.
+- Concision : les documents produits sont imprimés et lus par des enseignants pressés et des élèves fragiles en lecture. Va à l'essentiel, pas de phrases d'introduction ni de conclusion, pas de répétition de ce qu'un autre agent a déjà écrit. Respecte strictement les longueurs maximales indiquées.
 - Exactitude : n'invente jamais un fait, une date, une citation, un chiffre ou une référence officielle. Ce qui relève de ta proposition pédagogique (et non d'un texte officiel) doit être présenté comme une proposition."""
 
 PROMPT_SOURCES = CONTEXTE_COMMUN + """
@@ -44,6 +49,7 @@ Règles strictes :
 - Recopie mot pour mot les notions et mots-clés, les capacités et les repères du thème : ne reformule pas, les agents suivants s'appuieront sur ces formulations exactes.
 - Si le thème demandé ne correspond pas exactement à un intitulé du programme, dis-le et indique le ou les thèmes officiels les plus proches.
 - Cite l'URL exacte de chaque information.
+- Ne recopie que ce qui concerne le thème de la séance, pas le reste du programme. Longueur maximale : 350 mots hors URL.
 - Si une information n'est pas trouvée sur un site officiel, écris « SOURCE OFFICIELLE NON TROUVÉE » à sa place.
 
 Entrée : la demande du prof (classe, spécialité, thème, durée, format).
@@ -57,7 +63,7 @@ Intitulé exact, et écart éventuel avec la demande du prof.
 ## Repères
 (Pour les repères, distingue ceux déjà vus au cycle 4 s'ils sont signalés dans le programme.)
 ## Commentaire du programme
-Citation ou résumé fidèle des orientations, avec URL.
+Résumé fidèle des orientations en 3 phrases au maximum, avec URL.
 ## Ressources d'accompagnement officielles
 Titre et URL de chaque ressource Eduscol utile.
 ## Points sans source officielle"""
@@ -70,19 +76,24 @@ Règles :
 - Les notions, capacités et repères que tu retiens doivent être repris tels quels de la fiche de l'agent 1. N'en ajoute aucun qui n'y figure pas.
 - La place dans la progression annuelle et les difficultés des élèves sont des propositions : présente-les comme telles.
 - Durée : respecte exactement la durée demandée par le prof. Si elle n'est pas précisée, retiens 55 minutes et indique-le.
+- Longueur maximale : 250 mots. Une ligne par puce.
 
 Entrée : la demande du prof + la fiche « Référentiel officiel ».
 Sortie, avec exactement ces sections :
 ## Classe, thème et spécialité
+Une seule ligne.
 ## Place dans la progression (proposition)
+Une seule phrase.
 ## Objectifs d'apprentissage
 2 à 4 objectifs formulés avec des verbes d'action concrets (« situer », « décrire », « expliquer »…), chacun relié à une capacité ou une notion du programme.
 ## Notions, capacités et repères travaillés
+Trois lignes au maximum (notions / capacités / repères), sans recopier le programme en entier.
 ## Prérequis
+2 puces au maximum.
 ## Points de vigilance (hypothèses)
-Difficultés probables des élèves sur ce thème.
+2 difficultés probables des élèves au maximum.
 ## Exemples liés à la spécialité
-2 ou 3 exemples concrets en lien avec le métier préparé.
+2 exemples concrets en lien avec le métier préparé.
 ## Découpage horaire
 Tableau | Partie | Durée |, terminé par une ligne **Total** égale à la durée de la séance."""
 
@@ -95,18 +106,19 @@ Règles :
 - Prévois une accroche, des transitions explicites, des moments de synthèse orale et un temps de trace écrite.
 - Respecte le découpage horaire du cadrage : la somme des durées doit être exactement égale à la durée de la séance.
 - Tu décides des documents utilisés pendant la séance : numérote-les Doc 1, Doc 2… (4 au maximum). L'agent 5 les produira exactement d'après ta description, avec la même numérotation.
-- Consignes aux élèves : phrases courtes, un verbe d'action par consigne.
+- Consignes aux élèves : phrases courtes, un verbe d'action par consigne, 25 mots au maximum.
+- 7 étapes au maximum. Longueur maximale totale : 400 mots.
 
 Entrée : la demande du prof + la fiche « Cadrage ».
 Sortie, avec exactement ces sections :
 ## Déroulé
-Tableau | Horaire | Durée | Étape | Objectif | Consigne exacte aux élèves | Support | Rôle du prof |, puis une ligne « **Total : X min** » qui doit être égale à la durée de la séance.
+Tableau à 5 colonnes exactement : | Durée | Étape et objectif | Consigne aux élèves | Support | Rôle du prof |. Cellules courtes (le tableau est imprimé en portrait). Puis une ligne « **Total : X min** » qui doit être égale à la durée de la séance.
 ## Documents nécessaires
-Pour chaque document : Doc N, nature (texte, carte, photographie, graphique, tableau statistique…), contenu attendu, étape où il est utilisé.
+Une ligne par document : Doc N, nature (texte, carte, photographie, graphique, tableau statistique…), contenu attendu, étape où il est utilisé.
 ## Différenciation
-Aides prévues pour les élèves en difficulté (coup de pouce, document simplifié, consigne guidée) et prolongement pour les élèves plus rapides.
+2 puces : une aide pour les élèves en difficulté (coup de pouce, document simplifié, consigne guidée), un prolongement pour les élèves plus rapides.
 ## Trace écrite
-Moment et modalité (dictée, texte à trous, construction collective…)."""
+Une phrase : moment et modalité (dictée, texte à trous, construction collective…)."""
 
 PROMPT_REDACTION = CONTEXTE_COMMUN + """
 
@@ -116,21 +128,21 @@ Règles de rédaction :
 - Phrases courtes (20 mots au maximum), une idée par phrase, vocabulaire expliqué, exemples concrets (de préférence liés à la spécialité).
 - Le cours suit les étapes du déroulé et renvoie aux documents par leur numéro (« voir Doc 1 »), sans les recopier.
 - Toutes les notions et mots-clés du programme travaillés dans la séance figurent dans le vocabulaire.
-- Longueur visée : 600 à 900 mots.
+- Longueur : 350 à 550 mots au total, pour que le cours tienne sur 2 pages imprimées. Le cours doit pouvoir être lu en 5 minutes.
 
 Entrée : la fiche « Cadrage » + le déroulé de séance.
 Sortie, avec exactement ces sections :
 # Titre de la séance
 ## Ce que je retiens
-3 à 5 points clés, formulés pour un élève.
+3 à 5 points clés, formulés pour un élève, 20 mots au maximum chacun.
 ## Cours
-Sous-parties ### qui suivent le déroulé.
+2 ou 3 sous-parties ### qui suivent le déroulé, de 4 à 6 phrases chacune.
 ## Vocabulaire
-Tableau | Mot | Définition simple |.
+Tableau | Mot | Définition simple |, 6 mots au maximum, définitions de 12 mots au maximum.
 ## Schéma ou tableau
-Un tableau markdown, ou un schéma décrit précisément (éléments, flèches, légende).
+Un seul tableau markdown court (5 lignes au maximum), ou un schéma décrit en 3 phrases.
 ## Frise ou carte
-Description précise : titre, éléments à faire figurer, légende."""
+Description en 2 phrases : titre, éléments à faire figurer, légende."""
 
 PROMPT_DOCUMENTS = CONTEXTE_COMMUN + """
 
@@ -141,7 +153,8 @@ Règles sur les documents :
 - Utilise la recherche web pour trouver de vrais documents (textes historiques, extraits officiels, statistiques, articles) en privilégiant les sites institutionnels, d'archives, de musées et de presse reconnue.
 - Tout texte présenté comme authentique (citation, extrait, chiffre) est accompagné de son auteur, sa date et l'URL où tu l'as trouvé. Ne cite jamais de mémoire. Un extrait raccourci ou simplifié est signalé « texte adapté ».
 - Si tu ne trouves pas de source vérifiable, rédige un document pour la classe et indique explicitement « Texte rédigé pour la séance (non authentique) ».
-- Textes de 150 mots au maximum, avec les mots difficiles expliqués en note.
+- Textes de 120 mots au maximum, avec les mots difficiles expliqués en note.
+- Longueur : la partie élève doit tenir sur 2 pages imprimées (500 mots au maximum, documents compris) ; la partie professeur sur une demi-page (150 mots au maximum).
 
 Entrée : le cadrage, le déroulé et le support de cours.
 Sortie, avec exactement ces deux parties :
@@ -149,16 +162,18 @@ Sortie, avec exactement ces deux parties :
 ### Doc 1 — titre
 (source : auteur, date, URL, ou « Texte rédigé pour la séance (non authentique) »). Idem pour chaque document.
 ### Questions
-2 à 3 questions par document ou pour l'ensemble, progressives : prélever une information, puis expliquer, puis mettre en relation.
+3 à 5 questions au total, en liste numérotée, progressives : prélever une information, puis expliquer, puis mettre en relation. Une ligne par question.
 ### Carte ou schéma à compléter
-Titre, éléments à placer, légende attendue.
+Consigne en 2 phrases : titre, éléments à placer, légende attendue (un cadre vide sera ajouté pour dessiner).
 ### Exercice d'application
-Mise en situation, si possible liée à la spécialité.
+Mise en situation en 2 ou 3 phrases, si possible liée à la spécialité.
 ### Coup de pouce
-Aides pour les élèves en difficulté.
+2 ou 3 aides courtes.
 ## Partie professeur
 ### Corrigé
-### Réponses attendues et erreurs fréquentes"""
+Réponses brèves, numérotées comme les questions.
+### Erreurs fréquentes
+2 puces au maximum."""
 
 PROMPT_EVALUATION = CONTEXTE_COMMUN + """
 
@@ -167,7 +182,8 @@ Tu es l'agent 6, concepteur de l'évaluation.
 Règles :
 - Chaque objectif d'apprentissage du cadrage est évalué par au moins une question.
 - Les questions portent uniquement sur ce qui a été vu dans le support de cours.
-- Formulations courtes et sans piège ; pour les QCM, 3 ou 4 propositions plausibles.
+- Formulations courtes et sans piège ; pour les QCM, 3 propositions plausibles, en sous-liste sous la question.
+- Longueur : la partie élève doit tenir sur une page imprimée, lignes de réponse comprises ; la partie professeur sur une demi-page.
 
 Entrée : le cadrage et le support de cours.
 Sortie, avec exactement ces deux parties :
@@ -175,9 +191,9 @@ Sortie, avec exactement ces deux parties :
 ### Quiz
 5 questions (QCM ou questions courtes) sur les points clés.
 ### Question de réflexion
-Une courte réponse construite (quelques lignes), proche des attendus de l'examen, qui mobilise une notion du programme.
+Une seule question, pour une courte réponse construite (5 lignes), proche des attendus de l'examen, qui mobilise une notion du programme.
 ### Auto-évaluation
-Tableau | Capacité | Non acquis | En cours | Acquis | Expert |, avec pour chaque niveau un descripteur observable.
+Tableau | Capacité | Non acquis | En cours | Acquis | Expert |, 2 capacités au maximum, descripteurs de 8 mots au maximum.
 ## Partie professeur
 ### Corrigé
 ### Correspondance questions / objectifs
@@ -207,7 +223,7 @@ Une vérification fausse plafonne à 3 la note du critère concerné.
 Grille (note entière de 1 à 5 par critère ; 2 et 4 sont des niveaux intermédiaires) :
 1. c1_ancrage_programme — 5 : programme identifié avec URL officielle, notions/capacités/repères repris dans le cadrage et le cours. 3 : programme identifié mais reprise partielle ou sources incomplètes. 1 : aucune source officielle ou thème hors programme.
 2. c2_deroule — 5 : total exact, durées réalistes, consignes exactes et actives. 3 : petit écart de durée ou consignes floues. 1 : total faux ou séance irréalisable.
-3. c3_niveau_langage — 5 : phrases courtes, vocabulaire expliqué, exemples concrets. 3 : quelques passages trop abstraits. 1 : niveau inadapté au lycée professionnel.
+3. c3_niveau_langage — 5 : phrases courtes, vocabulaire expliqué, exemples concrets, longueurs maximales respectées. 3 : quelques passages trop abstraits ou trop longs. 1 : niveau inadapté au lycée professionnel ou documents beaucoup trop longs.
 4. c4_coherence — 5 : chaque objectif est travaillé, documenté et évalué ; documents identiques d'un agent à l'autre. 3 : un décalage. 1 : plusieurs décalages.
 5. c5_exactitude — 5 : aucune erreur ; toute citation présentée comme authentique a une URL dans les sources consultées, sinon elle est marquée « non authentique ». 3 : une imprécision mineure. 1 : erreur factuelle, ou citation non sourcée présentée comme authentique.
 
@@ -640,104 +656,398 @@ def apply_correction(client, outputs, rapport, checkpoint=None):
 
 # --------------------------------------------------------------------------- export .docx
 
+# Charte graphique
+POLICE = "Arial"
+ACCENT = RGBColor(0x1F, 0x4E, 0x79)
+GRIS = RGBColor(0x59, 0x59, 0x59)
+FOND_ENTETE = "DCE6F2"      # en-têtes de tableaux
+FOND_DOC = "F3F6FA"         # encadrés « Doc N »
+FOND_RETIENS = "FFF4D6"     # encadré « Ce que je retiens »
+BORDURE = "BFBFBF"
+LARGEUR_TEXTE_CM = 17.0     # A4 avec marges de 2 cm
+
 INLINE_RE = re.compile(r"(\*\*[^*]+\*\*|__[^_]+__|\*[^*\s][^*]*\*|`[^`]+`)")
+PARTIE_RE = re.compile(r"^#{1,3}\s*\**\s*partie\s+(él[eè]ve|eleve|professeur|prof|enseignant)\b.*$",
+                       re.IGNORECASE | re.MULTILINE)
+HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 
 
-def add_inline(paragraph, text):
+def add_inline(paragraph, text, size=None):
     for part in INLINE_RE.split(text):
         if not part:
             continue
         if (part.startswith("**") and part.endswith("**")) or (part.startswith("__") and part.endswith("__")):
-            paragraph.add_run(part[2:-2]).bold = True
+            run = paragraph.add_run(part[2:-2])
+            run.bold = True
         elif part.startswith("`") and part.endswith("`"):
-            paragraph.add_run(part[1:-1]).font.name = "Courier New"
+            run = paragraph.add_run(part[1:-1])
+            run.font.name = "Courier New"
         elif part.startswith("*") and part.endswith("*") and len(part) > 2:
-            paragraph.add_run(part[1:-1]).italic = True
+            run = paragraph.add_run(part[1:-1])
+            run.italic = True
         else:
-            paragraph.add_run(part)
+            run = paragraph.add_run(part)
+        if size:
+            run.font.size = Pt(size)
     return paragraph
+
+
+# ---- utilitaires XML (python-docx n'expose pas ces réglages)
+
+def _set_cell_fill(cell, fill):
+    tc_pr = cell._tc.get_or_add_tcPr()
+    for old in tc_pr.findall(qn("w:shd")):
+        tc_pr.remove(old)
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), fill)
+    tc_pr.append(shd)
+
+
+def _set_table_borders(table, color=BORDURE, size=4, inside=True):
+    tbl_pr = table._tbl.tblPr
+    for old in tbl_pr.findall(qn("w:tblBorders")):
+        tbl_pr.remove(old)
+    borders = OxmlElement("w:tblBorders")
+    edges = ["top", "left", "bottom", "right"] + (["insideH", "insideV"] if inside else [])
+    for edge in ["top", "left", "bottom", "right", "insideH", "insideV"]:
+        el = OxmlElement(f"w:{edge}")
+        visible = edge in edges
+        el.set(qn("w:val"), "single" if visible else "nil")
+        if visible:
+            el.set(qn("w:sz"), str(size))
+            el.set(qn("w:color"), color)
+        borders.append(el)
+    tbl_pr.append(borders)
+
+
+def _set_cell_margins(table, top=60, bottom=60, left=100, right=100):
+    tbl_pr = table._tbl.tblPr
+    mar = OxmlElement("w:tblCellMar")
+    for side, val in (("top", top), ("left", left), ("bottom", bottom), ("right", right)):
+        el = OxmlElement(f"w:{side}")
+        el.set(qn("w:w"), str(val))
+        el.set(qn("w:type"), "dxa")
+        mar.append(el)
+    tbl_pr.append(mar)
+
+
+def _row_flag(row, tag):
+    tr_pr = row._tr.get_or_add_trPr()
+    el = OxmlElement(tag)
+    el.set(qn("w:val"), "true")
+    tr_pr.append(el)
+
+
+def _spacer(container, points=4):
+    """Petit espace vertical (paragraphe vide à hauteur fixe)."""
+    p = container.add_paragraph()
+    p.paragraph_format.space_after = Pt(0)
+    p.paragraph_format.line_spacing = Pt(points)
+    return p
+
+
+def _add_field(paragraph, instr):
+    run = paragraph.add_run()
+    for tag, attr in (("w:fldChar", "begin"), ("w:instrText", instr), ("w:fldChar", "end")):
+        el = OxmlElement(tag)
+        if tag == "w:instrText":
+            el.set(qn("xml:space"), "preserve")
+            el.text = instr
+        else:
+            el.set(qn("w:fldCharType"), attr)
+        run._r.append(el)
+    return run
+
+
+def _strip_theme_fonts(style):
+    r_pr = style.element.get_or_add_rPr()
+    r_fonts = r_pr.find(qn("w:rFonts"))
+    if r_fonts is not None:
+        for attr in ("w:asciiTheme", "w:hAnsiTheme", "w:eastAsiaTheme", "w:cstheme"):
+            r_fonts.attrib.pop(qn(attr), None)
+
+
+def _remove_paragraph(paragraph):
+    paragraph._element.getparent().remove(paragraph._element)
+
+
+# ---- document et styles
+
+def new_document(eleve, pied_de_page):
+    """Document A4 stylé. Côté élève : police plus grande et plus aérée."""
+    doc = Document()
+    section = doc.sections[0]
+    section.page_width, section.page_height = Cm(21), Cm(29.7)
+    section.left_margin = section.right_margin = Cm(2)
+    section.top_margin, section.bottom_margin = Cm(1.4), Cm(1.4)
+
+    taille = 12 if eleve else 10.5
+    normal = doc.styles["Normal"]
+    normal.font.name = POLICE
+    normal.font.size = Pt(taille)
+    _strip_theme_fonts(normal)
+    normal.paragraph_format.space_after = Pt(4)
+    normal.paragraph_format.line_spacing = 1.15 if eleve else 1.1
+
+    for niveau, (size, color, before) in {1: (taille + 3, ACCENT, 12 if eleve else 14),
+                                          2: (taille + 1.5, ACCENT, 8), 3: (taille + 0.5, GRIS, 6)}.items():
+        style = doc.styles[f"Heading {niveau}"]
+        style.font.name = POLICE
+        style.font.size = Pt(size)
+        style.font.bold = True
+        style.font.italic = False
+        style.font.color.rgb = color
+        _strip_theme_fonts(style)
+        style.paragraph_format.space_before = Pt(before)
+        style.paragraph_format.space_after = Pt(4)
+        style.paragraph_format.keep_with_next = True
+    for name in ("List Bullet", "List Bullet 2"):
+        doc.styles[name].paragraph_format.space_after = Pt(2)
+
+    footer = section.footer.paragraphs[0]
+    footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = footer.add_run(f"{pied_de_page}  —  page ")
+    run.font.size, run.font.color.rgb = Pt(8), GRIS
+    for instr, sep in (("PAGE", " / "), ("NUMPAGES", "")):
+        field = _add_field(footer, instr)
+        field.font.size, field.font.color.rgb = Pt(8), GRIS
+        if sep:
+            sep_run = footer.add_run(sep)
+            sep_run.font.size, sep_run.font.color.rgb = Pt(8), GRIS
+    return doc
+
+
+def add_title(doc, titre, sous_titre=None):
+    p = doc.add_paragraph()
+    p.paragraph_format.space_after = Pt(2)
+    run = p.add_run(titre)
+    run.bold, run.font.size, run.font.color.rgb = True, Pt(18), ACCENT
+    if sous_titre:
+        p = doc.add_paragraph()
+        p.paragraph_format.space_after = Pt(8)
+        run = p.add_run(sous_titre.upper())
+        run.font.size, run.font.color.rgb, run.bold = Pt(9), GRIS, True
+
+
+def add_box(doc, fill, border=BORDURE, hauteur_cm=None):
+    """Encadré : tableau 1×1 coloré. Retourne la cellule, dans laquelle on peut écrire du markdown.
+    `hauteur_cm` : hauteur minimale (cadre vide pour dessiner une carte, un croquis…)."""
+    table = doc.add_table(rows=1, cols=1)
+    _set_table_borders(table, color=border, size=6, inside=False)
+    _set_cell_margins(table, top=100, bottom=60, left=160, right=160)
+    cell = table.cell(0, 0)
+    cell.width = Cm(LARGEUR_TEXTE_CM)
+    if fill:
+        _set_cell_fill(cell, fill)
+    if hauteur_cm:
+        table.rows[0].height = Cm(hauteur_cm)
+        table.rows[0].height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
+    else:
+        _row_flag(table.rows[0], "w:cantSplit")
+    _spacer(doc, 8)  # respiration après l'encadré
+    return cell
+
+
+def _clean_box(cell):
+    if len(cell.paragraphs) > 1 and not cell.paragraphs[0].text.strip():
+        _remove_paragraph(cell.paragraphs[0])
+    # pas d'espace vide en bas de l'encadré
+    while len(cell._tc.xpath("./w:p")) > 1 and not cell.paragraphs[-1].text.strip() \
+            and cell._tc[-1].tag == qn("w:p"):
+        _remove_paragraph(cell.paragraphs[-1])
 
 
 def _table_cells(line):
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
-def add_table(doc, lines):
+def add_table(container, lines, size):
     rows = [_table_cells(l) for l in lines if not re.fullmatch(r"\|?[\s:\-|]+\|?", l.strip())]
     if not rows:
         return
     width = max(len(r) for r in rows)
-    table = doc.add_table(rows=len(rows), cols=width)
-    table.style = "Table Grid"
+    table = container.add_table(rows=len(rows), cols=width)
+    table.autofit = False
+    _set_table_borders(table)
+    _set_cell_margins(table)
+    # largeur des colonnes proportionnelle à leur contenu, bornée
+    poids = []
+    for j in range(width):
+        longueurs = [len(re.sub(r"[*`_]", "", r[j])) for r in rows if j < len(r)]
+        poids.append(min(max(sum(longueurs) / max(len(longueurs), 1), 6), 45))
+    total_cm = LARGEUR_TEXTE_CM - (0 if hasattr(container, "sections") else 1.2)  # moins large dans un encadré
+    largeurs = [Cm(total_cm * p / sum(poids)) for p in poids]
     for i, row in enumerate(rows):
+        _row_flag(table.rows[i], "w:cantSplit")
         for j in range(width):
             cell = table.cell(i, j)
-            cell.text = ""
-            run_par = cell.paragraphs[0]
-            add_inline(run_par, row[j] if j < len(row) else "")
+            cell.width = largeurs[j]
+            par = cell.paragraphs[0]
+            par.paragraph_format.space_after = Pt(0)
+            add_inline(par, row[j] if j < len(row) else "", size=size)
             if i == 0:
-                for run in run_par.runs:
+                _set_cell_fill(cell, FOND_ENTETE)
+                for run in par.runs:
                     run.bold = True
+    _row_flag(table.rows[0], "w:tblHeader")
+    _spacer(container, 6)
+
+
+class Rendu:
+    """Convertit le markdown des agents en contenu Word.
+
+    eleve=True active les aides de mise en page pour les fiches élèves : lignes de réponse après les questions,
+    cases à cocher pour les QCM, lignes de rédaction pour la question de réflexion et l'exercice.
+    """
+
+    LIGNES_PAR_QUESTION = 2
+    LIGNES_SECTION = {"reflexion": 5, "exercice": 4}
+
+    def __init__(self, eleve=False):
+        self.eleve = eleve
+        self.table_size = 11 if eleve else 9.5
+
+    @staticmethod
+    def section_kind(titre):
+        t = (titre or "").lower()
+        if "réflexion" in t or "reflexion" in t:
+            return "reflexion"
+        if t.startswith("exercice"):
+            return "exercice"
+        if t.startswith(("question", "quiz")):
+            return "questions"
+        return None
+
+    def answer_lines(self, container, n):
+        for _ in range(n):
+            p = container.add_paragraph()
+            p.paragraph_format.space_after = Pt(0)
+            p.paragraph_format.line_spacing = 1.4
+            p.paragraph_format.tab_stops.add_tab_stop(Cm(LARGEUR_TEXTE_CM - 0.2), WD_TAB_ALIGNMENT.RIGHT,
+                                                      WD_TAB_LEADER.DOTS)
+            run = p.add_run("\t")
+            run.font.color.rgb = RGBColor(0xA6, 0xA6, 0xA6)
+
+    def markdown(self, container, text, parent_level=0, kind=None):
+        """Écrit `text` dans `container` (document ou cellule) ; le titre le plus haut du texte est calé au
+        niveau parent_level + 1. `kind` : type de section élève de départ (questions, réflexion…)."""
+        lines = (text or "").replace("\r\n", "\n").split("\n")
+        niveaux = [len(m.group(1)) for l in lines if (m := HEADING_RE.match(l.strip()))]
+        decalage = parent_level + 1 - min(niveaux) if niveaux else 0
+        state = {"kind": kind, "pending": False, "options": False}
+        buf = []
+
+        def flush_par():
+            if buf:
+                add_inline(container.add_paragraph(), " ".join(s.strip() for s in buf))
+                buf.clear()
+
+        def flush_question():
+            if self.eleve and state["pending"] and not state["options"]:
+                self.answer_lines(container, self.LIGNES_PAR_QUESTION)
+            state["pending"], state["options"] = False, False
+
+        def end_section():
+            flush_par()
+            flush_question()
+            if self.eleve and state["kind"] in self.LIGNES_SECTION:
+                self.answer_lines(container, self.LIGNES_SECTION[state["kind"]])
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                flush_par()
+                i += 1
+                code = []
+                while i < len(lines) and not lines[i].strip().startswith("```"):
+                    code.append(lines[i])
+                    i += 1
+                run = container.add_paragraph().add_run("\n".join(code))
+                run.font.name, run.font.size = "Courier New", Pt(9)
+            elif not stripped or re.fullmatch(r"(-{3,}|\*{3,}|_{3,})", stripped):
+                flush_par()
+            elif m := HEADING_RE.match(stripped):
+                end_section()
+                titre = m.group(2).strip("# ").replace("**", "")
+                level = max(1, min(len(m.group(1)) + decalage, 9))
+                container.add_paragraph(titre, style=f"Heading {min(level, 3)}")
+                state["kind"] = self.section_kind(titre)
+            elif stripped.startswith("|"):
+                flush_par()
+                flush_question()
+                table_lines = []
+                while i < len(lines) and lines[i].strip().startswith("|"):
+                    table_lines.append(lines[i])
+                    i += 1
+                add_table(container, table_lines, self.table_size)
+                continue
+            elif m := re.match(r"^(\s*)[-*+•]\s+(.*)$", line):
+                flush_par()
+                nested = len(m.group(1).replace("\t", "  ")) >= 2
+                if self.eleve and nested and state["pending"]:
+                    state["options"] = True  # options de QCM sous une question
+                    p = container.add_paragraph()
+                    p.paragraph_format.left_indent = Cm(1.4)
+                    p.paragraph_format.space_after = Pt(0)
+                    add_inline(p, "☐  " + re.sub(r"^\(?[a-dA-D][).]\s*", "", m.group(2)))
+                else:
+                    flush_question()
+                    add_inline(container.add_paragraph(style="List Bullet 2" if nested else "List Bullet"),
+                               m.group(2))
+            elif m := re.match(r"^(\s*)(\d+)[.)]\s+(.*)$", line):
+                flush_par()
+                flush_question()
+                nested = len(m.group(1).replace("\t", "  ")) >= 2
+                retrait = Cm(1.4 if nested else 0.7)
+                p = container.add_paragraph()
+                p.paragraph_format.left_indent = retrait
+                p.paragraph_format.first_line_indent = -Cm(0.7)
+                p.paragraph_format.tab_stops.add_tab_stop(retrait)
+                p.paragraph_format.space_after = Pt(2)
+                num = p.add_run(f"{m.group(2)}.\t")
+                num.bold, num.font.color.rgb = True, ACCENT
+                add_inline(p, m.group(3))
+                state["pending"] = state["kind"] == "questions" and not nested
+            elif stripped.startswith(">"):
+                flush_par()
+                p = add_inline(container.add_paragraph(), stripped.lstrip("> "))
+                for run in p.runs:
+                    run.italic = True
+            else:
+                flush_question()
+                buf.append(stripped)
+            i += 1
+        end_section()
 
 
 def add_markdown(doc, text, base_level=1):
-    lines = (text or "").replace("\r\n", "\n").split("\n")
-    i, paragraph_buf = 0, []
+    """Compatibilité : rendu markdown sans aides élèves, titres calés sous `base_level`."""
+    Rendu().markdown(doc, text, parent_level=base_level)
 
-    def flush():
-        if paragraph_buf:
-            add_inline(doc.add_paragraph(), " ".join(s.strip() for s in paragraph_buf))
-            paragraph_buf.clear()
 
-    while i < len(lines):
-        line = lines[i]
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            flush()
-            i += 1
-            code = []
-            while i < len(lines) and not lines[i].strip().startswith("```"):
-                code.append(lines[i])
-                i += 1
-            p = doc.add_paragraph()
-            run = p.add_run("\n".join(code))
-            run.font.name = "Courier New"
-            run.font.size = Pt(9)
-        elif not stripped or re.fullmatch(r"(-{3,}|\*{3,}|_{3,})", stripped):
-            flush()
-        elif m := re.match(r"^(#{1,6})\s+(.*)$", stripped):
-            flush()
-            level = max(1, min(base_level + len(m.group(1)), 9))
-            doc.add_heading(m.group(2).strip("# ").replace("**", ""), level=level)
-        elif stripped.startswith("|"):
-            flush()
-            table_lines = []
-            while i < len(lines) and lines[i].strip().startswith("|"):
-                table_lines.append(lines[i])
-                i += 1
-            add_table(doc, table_lines)
-            continue
-        elif m := re.match(r"^(\s*)[-*+•]\s+(.*)$", line):
-            flush()
-            style = "List Bullet 2" if len(m.group(1).replace("\t", "  ")) >= 2 else "List Bullet"
-            add_inline(doc.add_paragraph(style=style), m.group(2))
-        elif m := re.match(r"^(\s*)\d+[.)]\s+(.*)$", line):
-            flush()
-            style = "List Number 2" if len(m.group(1).replace("\t", "  ")) >= 2 else "List Number"
-            add_inline(doc.add_paragraph(style=style), m.group(2))
-        elif stripped.startswith(">"):
-            flush()
-            p = add_inline(doc.add_paragraph(), stripped.lstrip("> "))
-            for run in p.runs:
-                run.italic = True
+def split_sections(text):
+    """Découpe un texte markdown sur ses titres de plus haut niveau : [(titre ou None, corps)]."""
+    text = text or ""
+    lines = text.split("\n")
+    niveaux = [len(m.group(1)) for l in lines if (m := HEADING_RE.match(l.strip()))]
+    if not niveaux:
+        return [(None, text)]
+    top = min(niveaux)
+    sections, titre, corps = [], None, []
+    for line in lines:
+        m = HEADING_RE.match(line.strip())
+        if m and len(m.group(1)) == top:
+            if titre is not None or "".join(corps).strip():
+                sections.append((titre, "\n".join(corps).strip()))
+            titre, corps = m.group(2).strip("# ").replace("**", ""), []
         else:
-            paragraph_buf.append(stripped)
-        i += 1
-    flush()
-
-
-PARTIE_RE = re.compile(r"^#{1,3}\s*\**\s*partie\s+(él[eè]ve|eleve|professeur|prof|enseignant)\b.*$",
-                       re.IGNORECASE | re.MULTILINE)
+            corps.append(line)
+    sections.append((titre, "\n".join(corps).strip()))
+    return sections
 
 
 def split_parties(text):
@@ -766,108 +1076,181 @@ def session_title(outputs, demande):
     return titre
 
 
+# ---- documents professeur
+
 def _warning(doc, livre, rapports):
     if livre:
         return
-    run = doc.add_paragraph().add_run(
-        f"⚠ ATTENTION : le seuil de livraison ({SEUIL_LIVRAISON}/5) n'a pas été atteint après "
-        f"{len(rapports)} relecture(s). Relisez attentivement ce cours avant de l'utiliser."
+    cell = add_box(doc, "FDECEA", border="C00000")
+    run = cell.paragraphs[0].add_run(
+        f"⚠ Seuil de qualité ({SEUIL_LIVRAISON}/5) non atteint après {len(rapports)} relecture(s) : "
+        "relisez attentivement ce cours avant de l'utiliser (voir « Contrôle qualité » en annexe)."
     )
-    run.bold = True
-    run.font.color.rgb = RGBColor(0xC0, 0x00, 0x00)
+    run.bold, run.font.color.rgb = True, RGBColor(0xC0, 0x00, 0x00)
 
 
-def _teacher_header(doc, titre, demande, livre, rapports):
-    doc.add_heading(titre, level=0)
+def _teacher_header(doc, titre, sous_titre, demande, livre, rapports):
+    add_title(doc, titre, sous_titre)
     p = doc.add_paragraph()
-    p.add_run("Demande : ").bold = True
-    p.add_run(demande)
+    label = p.add_run("Demande : ")
+    label.bold, label.font.color.rgb = True, GRIS
+    p.add_run(demande).font.color.rgb = GRIS
     _warning(doc, livre, rapports)
 
 
-def _student_header(doc, titre, sous_titre):
-    doc.add_heading(titre, level=0)
-    doc.add_paragraph(sous_titre).runs[0].italic = True
-    doc.add_paragraph("Nom : ______________________    Prénom : ______________________\n"
-                      "Classe : ____________    Date : ____________")
+def _add_rapport(doc, rendu, r, titre, detail=True):
+    doc.add_paragraph(titre, style="Heading 2")
+    if not detail:
+        return
+    lignes = ["| Critère | Note /5 |", "|---|---|"]
+    lignes += [f"| {CRITERES.get(k, k)} | {v} |" for k, v in (r.get("notes") or {}).items()]
+    if len(lignes) > 2:
+        add_table(doc, lignes, rendu.table_size)
+    verifs = r.get("verifications") or {}
+    for key, ok in verifs.items():
+        doc.add_paragraph(f"{'✔' if ok is True else '✘'}  {VERIFICATIONS.get(key, key)}", style="List Bullet")
+    for corr in r.get("corrections") or []:
+        add_inline(doc.add_paragraph(),
+                   f"**Renvoi vers l'agent {corr['agent']} ({AGENTS[corr['agent'] - 1]['title']})** :")
+        for c in corr["consignes"]:
+            add_inline(doc.add_paragraph(style="List Bullet 2"), c)
 
 
-def _add_rapports_et_modeles(doc, rapports):
-    doc.add_heading("Rapports de relecture", level=1)
-    for i, r in enumerate(rapports, 1):
-        doc.add_heading(f"Itération {i} — score {r.get('score_global')}/5, livraison : {r.get('livraison')}", level=2)
-        notes = r.get("notes") or {}
+def _modeles_lignes():
+    """Modèles utilisés, regroupés : {modèle: [agents]}."""
+    groupes = {}
+    for cfg in AGENTS + [RELECTEUR]:
+        if cfg["name"] in ROUTEUR.utilises:
+            groupes.setdefault(ROUTEUR.utilises[cfg["name"]], []).append(cfg["title"])
+    return groupes
+
+
+def _add_controle_qualite(doc, rendu, rapports, complet):
+    """complet=True : chaque relecture en détail (dossier complet). Sinon : synthèse en quelques lignes."""
+    if complet:
+        for i, r in enumerate(rapports, 1):
+            _add_rapport(doc, rendu, r, f"Relecture {i} — {r.get('score_global')}/5 — livraison : {r.get('livraison')}")
+        if ROUTEUR.utilises:
+            doc.add_paragraph("Modèles utilisés", style="Heading 2")
+            lignes = ["| Agent | Modèle |", "|---|---|"]
+            lignes += [f"| {cfg['title']} | {ROUTEUR.utilises[cfg['name']]} |"
+                       for cfg in AGENTS + [RELECTEUR] if cfg["name"] in ROUTEUR.utilises]
+            add_table(doc, lignes, rendu.table_size)
+        return
+    if rapports:
+        historique = " → ".join(f"{r.get('score_global')}/5" for r in rapports)
+        dernier = rapports[-1]
+        add_inline(doc.add_paragraph(), f"**Score final : {dernier.get('score_global')}/5** "
+                                        f"(livraison : {dernier.get('livraison')}) — relectures : {historique}")
+        notes = dernier.get("notes") or {}
         if notes:
-            table = doc.add_table(rows=1, cols=2)
-            table.style = "Table Grid"
-            table.cell(0, 0).text, table.cell(0, 1).text = "Critère", "Note /5"
-            for key, val in notes.items():
-                cells = table.add_row().cells
-                cells[0].text, cells[1].text = CRITERES.get(key, key), str(val)
-        verifs = r.get("verifications") or {}
+            courts = {"c1_ancrage_programme": "Programme", "c2_deroule": "Déroulé", "c3_niveau_langage": "Langage",
+                      "c4_coherence": "Cohérence", "c5_exactitude": "Exactitude"}
+            doc.add_paragraph("Notes : " + " · ".join(f"{courts.get(k, k)} {v}" for k, v in notes.items()))
+        verifs = dernier.get("verifications") or {}
         if verifs:
-            doc.add_paragraph("Vérifications :")
-            for key, ok in verifs.items():
-                doc.add_paragraph(f"{'✔' if ok is True else '✘'} {VERIFICATIONS.get(key, key)}", style="List Bullet")
-        for corr in r.get("corrections") or []:
-            doc.add_paragraph(f"Renvoi vers l'agent {corr['agent']} ({AGENTS[corr['agent'] - 1]['title']}) :")
-            for c in corr["consignes"]:
-                add_inline(doc.add_paragraph(style="List Bullet 2"), c)
-
-    if ROUTEUR.utilises:
-        doc.add_heading("Modèles utilisés", level=1)
-        table = doc.add_table(rows=1, cols=2)
-        table.style = "Table Grid"
-        table.cell(0, 0).text, table.cell(0, 1).text = "Agent", "Modèle"
-        for cfg in AGENTS + [RELECTEUR]:
-            if cfg["name"] in ROUTEUR.utilises:
-                cells = table.add_row().cells
-                cells[0].text, cells[1].text = cfg["title"], ROUTEUR.utilises[cfg["name"]]
+            doc.add_paragraph("  ".join(f"{'✔' if ok is True else '✘'} {VERIFICATIONS.get(k, k)}"
+                                        for k, ok in verifs.items()))
+        for corr in dernier.get("corrections") or []:
+            add_inline(doc.add_paragraph(style="List Bullet"),
+                       f"**Reste à corriger ({AGENTS[corr['agent'] - 1]['title']})** : " + " ; ".join(corr["consignes"]))
+    for modele, agents in _modeles_lignes().items():
+        p = doc.add_paragraph(f"Modèle {modele} : {', '.join(agents)}.")
+        p.runs[0].font.size, p.runs[0].font.color.rgb = Pt(9), GRIS
 
 
-def add_section(doc, text, parent_level):
-    """Ajoute du markdown en calant son titre de plus haut niveau juste sous `parent_level`."""
-    niveaux = [len(m.group(1)) for m in re.finditer(r"^\s*(#{1,6})\s", text or "", re.MULTILINE)]
-    add_markdown(doc, text, base_level=parent_level + 1 - min(niveaux) if niveaux else parent_level)
+ANNEXE_PROGRAMME = ("programme applicable", "thème du programme", "points sans source", "sources officielles")
 
 
 def build_docx(path, demande, outputs, rapports, livre):
-    """Dossier complet : toutes les productions, rapports et modèles (archive / consultation)."""
-    doc = Document()
-    _teacher_header(doc, "Cours généré — dossier complet", demande, livre, rapports)
+    """Dossier complet : toutes les productions, tous les rapports et les modèles (archive / consultation)."""
+    rendu = Rendu()
+    titre = session_title(outputs, demande)
+    doc = new_document(eleve=False, pied_de_page=f"Dossier complet — {titre}")
+    _teacher_header(doc, titre, "Dossier complet", demande, livre, rapports)
     for agent in AGENTS:
-        doc.add_heading(agent["title"], level=1)
-        add_section(doc, outputs.get(agent["name"], ""), parent_level=1)
-    _add_rapports_et_modeles(doc, rapports)
+        doc.add_paragraph(agent["title"], style="Heading 1")
+        rendu.markdown(doc, outputs.get(agent["name"], ""), parent_level=1)
+    doc.add_paragraph("Contrôle qualité", style="Heading 1")
+    _add_controle_qualite(doc, rendu, rapports, complet=True)
     doc.save(path)
 
 
 def build_fiche_professeur(path, demande, outputs, rapports, livre):
-    """Fiche de préparation : programme, cadrage, déroulé, corrigés, contrôle qualité."""
-    doc = Document()
-    _teacher_header(doc, f"Fiche professeur — {session_title(outputs, demande)}", demande, livre, rapports)
-    for name in ("1_referentiel_officiel", "2_cadrage", "3_deroule"):
-        doc.add_heading(TITRES[name], level=1)
-        add_section(doc, outputs.get(name, ""), parent_level=1)
-    for name, titre in (("5_documents_eleves", "Documents élèves — partie professeur"),
-                        ("6_evaluation", "Évaluation — partie professeur")):
+    """Fiche de préparation, dans l'ordre d'usage : cadrage, déroulé, corrigés ; programme et contrôle qualité
+    en annexe."""
+    rendu = Rendu()
+    titre = session_title(outputs, demande)
+    doc = new_document(eleve=False, pied_de_page=f"Fiche professeur — {titre}")
+    _teacher_header(doc, titre, "Fiche professeur", demande, livre, rapports)
+
+    doc.add_paragraph("1. Objectifs et cadrage", style="Heading 1")
+    rendu.markdown(doc, outputs.get("2_cadrage", ""), parent_level=1)
+    doc.add_paragraph("2. Déroulé de la séance", style="Heading 1")
+    rendu.markdown(doc, outputs.get("3_deroule", ""), parent_level=1)
+    doc.add_paragraph("3. Corrigés", style="Heading 1")
+    for name, sous_titre in (("5_documents_eleves", "Documents et activités"), ("6_evaluation", "Évaluation")):
         eleve, prof = split_parties(outputs.get(name, ""))
-        doc.add_heading(titre, level=1)
+        doc.add_paragraph(sous_titre, style="Heading 2")
         if eleve is None:
-            doc.add_paragraph("La production n'a pas séparé partie élève et partie professeur : "
-                              "elle figure en entier ici et n'a pas été mise dans le document élève.").runs[0].italic = True
-        add_section(doc, prof, parent_level=1)
-    _add_rapports_et_modeles(doc, rapports)
+            p = doc.add_paragraph("Production non séparée en partie élève / professeur : elle figure en entier "
+                                  "ici et n'a pas été mise dans le document élève.")
+            p.runs[0].italic = True
+        rendu.markdown(doc, prof, parent_level=2)
+
+    doc.add_paragraph("Annexe A — Programme officiel et sources", style="Heading 1")
+    # Notions, capacités et repères sont déjà repris dans le cadrage : on ne garde ici que la référence du
+    # programme et les sources (le texte complet est dans le dossier complet).
+    for titre_section, corps in split_sections(outputs.get("1_referentiel_officiel", "")):
+        if titre_section is None or titre_section.lower().startswith(ANNEXE_PROGRAMME):
+            if titre_section:
+                doc.add_paragraph(titre_section, style="Heading 2")
+            rendu.markdown(doc, corps, parent_level=2)
+    doc.add_paragraph("Annexe B — Contrôle qualité", style="Heading 1")
+    _add_controle_qualite(doc, rendu, rapports, complet=False)
     doc.save(path)
 
 
+# ---- documents élèves
+
+def _student_header(doc, titre, sous_titre):
+    add_title(doc, titre, sous_titre)
+    table = doc.add_table(rows=1, cols=2)
+    _set_table_borders(table, size=6, inside=False)
+    _set_cell_margins(table, top=120, bottom=120, left=160, right=160)
+    for cell, texte, largeur in ((table.cell(0, 0), "Nom, prénom :", 10.5), (table.cell(0, 1), "Classe :     Date :", 6.5)):
+        cell.width = Cm(largeur)
+        run = cell.paragraphs[0].add_run(texte)
+        run.font.size, run.font.color.rgb = Pt(10), GRIS
+        cell.paragraphs[0].paragraph_format.space_after = Pt(0)
+    doc.add_paragraph().paragraph_format.space_after = Pt(4)
+
+
 def build_document_eleve(path, titre, sous_titre, contenu):
-    doc = Document()
+    """Fiche élève : sections au premier niveau ; « Ce que je retiens » et chaque « Doc N » dans un encadré."""
+    rendu = Rendu(eleve=True)
+    doc = new_document(eleve=True, pied_de_page=f"{titre} — {sous_titre}")
     _student_header(doc, titre, sous_titre)
-    if contenu:
-        add_section(doc, contenu, parent_level=0)
-    else:
+    if not contenu:
         doc.add_paragraph("Contenu indisponible : voir la fiche professeur.").runs[0].italic = True
+        doc.save(path)
+        return
+    for section_titre, corps in split_sections(contenu):
+        t = (section_titre or "").lower()
+        if "compléter" in t or "completer" in t or t.startswith("croquis"):
+            # consigne puis cadre vide pour dessiner
+            doc.add_paragraph(section_titre, style="Heading 1")
+            rendu.markdown(doc, corps, parent_level=1)
+            add_box(doc, None, hauteur_cm=7)
+        elif t.startswith("ce que je retiens") or re.match(r"doc(ument)?\s*\d", t):
+            cell = add_box(doc, FOND_RETIENS if t.startswith("ce que") else FOND_DOC)
+            cell.add_paragraph(section_titre, style="Heading 2")
+            rendu.markdown(cell, corps, parent_level=2)
+            _clean_box(cell)
+        else:
+            if section_titre:
+                doc.add_paragraph(section_titre, style="Heading 1")
+            rendu.markdown(doc, corps, parent_level=1, kind=Rendu.section_kind(section_titre))
     doc.save(path)
 
 
@@ -905,7 +1288,11 @@ def make_client(api_key):
 
 def main():
     parser = argparse.ArgumentParser(description="Workflow agentique de création de cours (Mistral)")
-    parser.add_argument("demande", help="Demande du prof, ex: 'Terminale bac pro Commerce, thème: la mondialisation, 2h, TD'")
+    parser.add_argument("demande", nargs="?",
+                        help="Demande du prof, ex: 'Terminale bac pro Commerce, thème: la mondialisation, 2h, TD'")
+    parser.add_argument("--rendu", metavar="COURS_FINAL_JSON",
+                        help="Régénère uniquement les documents .docx à partir d'un cours_final.json existant "
+                             "(aucun appel à l'API)")
     parser.add_argument("--outdir", default="output")
     parser.add_argument("--model", default=MODELES["principal"],
                         help=f"Modèle principal (défaut : {MODELES['principal']}, ou $MISTRAL_MODEL)")
@@ -917,6 +1304,19 @@ def main():
     args = parser.parse_args()
     MODELES.update(principal=args.model, leger=args.model_leger, secours=args.model_secours)
     ROUTEUR.reset()
+
+    if args.rendu:
+        source = Path(args.rendu)
+        data = json.loads(source.read_text(encoding="utf-8"))
+        ROUTEUR.utilises.update(data.get("modeles_utilises") or {})
+        fichiers = build_deliverables(source.parent, data["demande"], data["dossier"],
+                                      data.get("rapports_relecture") or [], bool(data.get("livre")))
+        print(f"Documents régénérés dans {source.parent}/ :")
+        for f in fichiers:
+            print(f"  - {f.name}")
+        return
+    if not args.demande:
+        parser.error("la demande du prof est obligatoire (sauf avec --rendu)")
 
     api_key = os.environ.get("MISTRAL_API_KEY")
     if not api_key:
