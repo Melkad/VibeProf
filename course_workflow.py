@@ -5,13 +5,18 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 from docx import Document
+from docx.shared import Pt, RGBColor
+
 from mistralai.client import Mistral
+from mistralai.client.utils import BackoffStrategy, RetryConfig
 
 MODEL = os.environ.get("MISTRAL_MODEL", "mistral-large-4")
 MAX_RELECTURES = 3
 SEUIL_LIVRAISON = 4.0
+DOMAINES_OFFICIELS = ("eduscol.education.fr", "education.gouv.fr")
 
 PROMPT_SOURCES = """Tu es un agent de recherche documentaire pour un enseignant d'histoire-géographie en lycée professionnel. Ta mission : récupérer les sources officielles du programme concerné.
 
@@ -24,15 +29,15 @@ Règles strictes :
 Entrée attendue : la demande du prof (niveau, spécialité, thème, durée, format).
 Sortie : une fiche structurée « Référentiel officiel » avec sections : programme applicable, objectifs officiels, compétences travaillées, documents officiels (avec URL), et liste des points sans source trouvée."""
 
-PROMPT_CADRAGE = """Tu es un agent de cadrage pédagogique. À partir de la fiche « Référentiel officiel » produite par l'agent précédent, tu ancre le sujet dans le programme du bac professionnel.
+PROMPT_CADRAGE = """Tu es un agent de cadrage pédagogique. À partir de la demande du prof et de la fiche « Référentiel officiel » produite par l'agent précédent, tu ancres le sujet dans le programme du bac professionnel.
 
-Entrée attendue : la fiche « Référentiel officiel ».
+Entrée attendue : la demande du prof + la fiche « Référentiel officiel ».
 Sortie : une fiche « Cadrage » contenant :
 - le chapitre exact du référentiel et sa place dans la progression annuelle
 - 2 à 4 objectifs d'apprentissage formulés pour des élèves de lycée pro (verbes d'action concrets)
 - les compétences du socle et du référentiel mobilisées
 - les prérequis nécessaires et les points de vigilance connus
-- une durée réaliste allouée à chaque partie de la séance"""
+- une durée réaliste allouée à chaque partie de la séance, cohérente avec la durée demandée par le prof"""
 
 PROMPT_CONCEPTION = """Tu es un concepteur de séances d'histoire-géographie pour le lycée professionnel. Tu conçois le déroulé pédagogique à partir du cadrage fourni.
 
@@ -40,8 +45,9 @@ Règles :
 - Privilégie les méthodes actives adaptées au lycée pro : manipulation de documents, travail en groupe, mise en situation, supports visuels.
 - Prévois des transitions explicites et des moments de synthèse orale.
 - Adapte le niveau de langage : phrases courtes, vocabulaire explicité, exemples concrets tirés du vécu des élèves.
+- Respecte la durée totale et le format demandés par le prof.
 
-Entrée attendue : la fiche « Cadrage ».
+Entrée attendue : la demande du prof + la fiche « Cadrage ».
 Sortie : un déroulé de séance minute par minute (ex: 5 min accroche, 15 min doc 1...) avec pour chaque étape : objectif, consigne exacte donnée aux élèves, support utilisé, et ce que fait le prof."""
 
 PROMPT_REDACTION = """Tu es un rédacteur de supports de cours d'histoire-géographie pour le lycée professionnel.
@@ -75,64 +81,183 @@ Sortie : une fiche « Évaluation » contenant :
 
 PROMPT_RELECTEUR = """Tu es le relecteur critique final d'un workflow de création de cours. Tu évalues la production complète et tu décides si elle peut être livrée.
 
+Les agents du workflow sont :
+- agent 1 : référentiel officiel (sources eduscol / education.gouv)
+- agent 2 : cadrage
+- agent 3 : déroulé de séance
+- agent 4 : support de cours
+- agent 5 : documents élèves
+- agent 6 : évaluation
+
 Grille d'évaluation (note chaque critère sur 5) :
 1. Ancrage au programme officiel (sources citées, objectifs conformes)
-2. Clarté et réalisme du déroulé temporel
+2. Clarté et réalisme du déroulé temporel (y compris respect de la durée demandée)
 3. Niveau de langage adapté au lycée professionnel
 4. Cohérence entre objectifs, support, documents et évaluation
 5. Absence d'erreurs factuelles et de biais
 
 Règles :
 - Score global = moyenne des 5 critères. Seuil de livraison : 4/5.
-- Si score < 4/5, liste précisément les défauts et indique À QUEL AGENT renvoyer la production (agent 2, 3, 4, 5 ou 6) avec les consignes de correction.
+- Si score < 4/5, liste précisément les défauts et indique À QUEL AGENT renvoyer la production (agent 1 à 6 : choisis l'agent le plus en amont à l'origine du défaut principal) avec les consignes de correction.
 - Ne modifie pas toi-même le contenu.
 
-Entrée attendue : l'ensemble du dossier (cadrage, déroulé, support, documents, évaluation).
-Sortie : UNIQUEMENT un bloc JSON valide, sans texte avant ni après :
+Entrée attendue : la demande du prof et l'ensemble du dossier (référentiel, cadrage, déroulé, support, documents, évaluation).
+Sortie : UNIQUEMENT un objet JSON valide, sans texte avant ni après, de la forme :
 {
-  "score_global": X.X,
-  "notes": {"c1_ancrage_programme": X, "c2_deroule": X, "c3_niveau_langage": X, "c4_coherence": X, "c5_exactitude": X},
+  "score_global": 3.8,
+  "notes": {"c1_ancrage_programme": 4, "c2_deroule": 3, "c3_niveau_langage": 4, "c4_coherence": 4, "c5_exactitude": 4},
   "livraison": "oui" ou "non",
-  "retour_vers": "agent X" ou "null",
+  "retour_vers": "agent 3" ou null,
   "consignes_correction": ["..."]
 }"""
 
+# Chaque agent déclare les productions dont il a besoin (« demande » = la demande initiale du prof).
 AGENTS = [
-    ("1_referentiel_officiel", PROMPT_SOURCES, True),
-    ("2_cadrage", PROMPT_CADRAGE, False),
-    ("3_deroule", PROMPT_CONCEPTION, False),
-    ("4_support_cours", PROMPT_REDACTION, False),
-    ("5_documents_eleves", PROMPT_DOCUMENTS, False),
-    ("6_evaluation", PROMPT_EVALUATION, False),
+    {"name": "1_referentiel_officiel", "title": "Référentiel officiel", "prompt": PROMPT_SOURCES,
+     "inputs": ["demande"], "web": True},
+    {"name": "2_cadrage", "title": "Cadrage", "prompt": PROMPT_CADRAGE,
+     "inputs": ["demande", "1_referentiel_officiel"], "web": False},
+    {"name": "3_deroule", "title": "Déroulé de séance", "prompt": PROMPT_CONCEPTION,
+     "inputs": ["demande", "2_cadrage"], "web": False},
+    {"name": "4_support_cours", "title": "Support de cours", "prompt": PROMPT_REDACTION,
+     "inputs": ["2_cadrage", "3_deroule"], "web": False},
+    {"name": "5_documents_eleves", "title": "Documents élèves", "prompt": PROMPT_DOCUMENTS,
+     "inputs": ["2_cadrage", "3_deroule", "4_support_cours"], "web": False},
+    {"name": "6_evaluation", "title": "Évaluation", "prompt": PROMPT_EVALUATION,
+     "inputs": ["2_cadrage", "4_support_cours"], "web": False},
 ]
+AGENTS_BY_NAME = {a["name"]: a for a in AGENTS}
+TITRES = {"demande": "Demande du prof", **{a["name"]: a["title"] for a in AGENTS}}
+CRITERES = {
+    "c1_ancrage_programme": "Ancrage au programme officiel",
+    "c2_deroule": "Clarté et réalisme du déroulé",
+    "c3_niveau_langage": "Niveau de langage",
+    "c4_coherence": "Cohérence d'ensemble",
+    "c5_exactitude": "Exactitude factuelle",
+}
+
+
+# --------------------------------------------------------------------------- utilitaires SDK
+
+def _get(obj, key, default=None):
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
 
 
 def chunk_text(chunk):
+    """Texte d'un chunk de contenu (str, dict ou modèle pydantic). Ignore thinking, références, etc."""
     if isinstance(chunk, str):
         return chunk
-    if isinstance(chunk, dict):
-        if chunk.get("type") == "text" and isinstance(chunk.get("text"), str):
-            return chunk["text"]
-        return None
-    if getattr(chunk, "type", None) == "text":
-        texte = getattr(chunk, "text", None)
+    if _get(chunk, "type") == "text":
+        texte = _get(chunk, "text")
         return texte if isinstance(texte, str) else None
     return None
 
 
-def call_agent(client, system_prompt, user_content):
+def content_to_text(content):
+    """Normalise un `message.content` (str, liste de chunks ou None) en texte brut."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(t for t in (chunk_text(c) for c in content) if t)
+    return chunk_text(content) or str(content)
+
+
+def is_official_url(url):
+    host = (urlparse(url).hostname or "").lower()
+    return any(host == d or host.endswith("." + d) for d in DOMAINES_OFFICIELS)
+
+
+URL_RE = re.compile(r"https?://[^\s)\]>\"'«»]+")
+
+
+def find_urls(text):
+    return [u.rstrip(".,;:") for u in URL_RE.findall(text or "")]
+
+
+# --------------------------------------------------------------------------- appels agents
+
+def build_input(outputs, agent, corrections=None):
+    parts = []
+    for key in agent["inputs"]:
+        parts.append(f"## {TITRES[key]}\n\n{outputs.get(key, '').strip()}")
+    if corrections:
+        consignes = "\n".join(f"- {c}" for c in corrections)
+        parts.append(
+            "## CORRECTIONS DEMANDÉES PAR LE RELECTEUR\n\n"
+            "Ta production précédente a été jugée insuffisante. Produis une nouvelle version "
+            f"complète qui applique ces consignes :\n{consignes}"
+        )
+        if agent["name"] in outputs:
+            parts.append(f"## Ta production précédente\n\n{outputs[agent['name']].strip()}")
+    return "\n\n---\n\n".join(parts)
+
+
+def call_agent(client, system_prompt, user_content, temperature=0.4, response_format=None):
     if not isinstance(user_content, str):
-        parts = [chunk_text(c) for c in user_content] if isinstance(user_content, list) else [str(user_content)]
-        user_content = "\n".join(p for p in parts if p)
+        user_content = content_to_text(user_content)
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
-    response = client.chat.complete(model=MODEL, messages=messages, temperature=0.4)
-    return response.choices[0].message.content
+    kwargs = {"model": MODEL, "messages": messages, "temperature": temperature}
+    if response_format:
+        kwargs["response_format"] = response_format
+    response = client.chat.complete(**kwargs)
+    return content_to_text(response.choices[0].message.content)
 
 
-def call_sources_agent(client, demande):
+def collect_conversation_output(response):
+    """Retourne (texte, références) d'une réponse conversations.start."""
+    textes, refs = [], []
+    for entry in _get(response, "outputs", []) or []:
+        if _get(entry, "type") != "message.output":
+            continue
+        content = _get(entry, "content", [])
+        if isinstance(content, str):
+            textes.append(content)
+            continue
+        for chunk in content or []:
+            if _get(chunk, "type") == "tool_reference":
+                url = _get(chunk, "url")
+                if isinstance(url, str) and url:
+                    refs.append({"title": _get(chunk, "title") or url, "url": url})
+                continue
+            texte = chunk_text(chunk)
+            if texte:
+                textes.append(texte)
+    return "".join(textes), refs
+
+
+def format_sources(texte, refs):
+    """Ajoute à la fiche la liste des sources officielles et signale les sources non officielles."""
+    officielles, ecartees, vues = [], [], set()
+    for ref in refs:
+        if ref["url"] in vues:
+            continue
+        vues.add(ref["url"])
+        (officielles if is_official_url(ref["url"]) else ecartees).append(ref)
+    citees_hors = sorted({u for u in find_urls(texte) if not is_official_url(u)})
+
+    blocs = [texte.strip()]
+    lignes = ["## Sources officielles consultées"]
+    if officielles:
+        lignes += [f"- {r['title']} : {r['url']}" for r in officielles]
+    else:
+        lignes.append("- SOURCE OFFICIELLE NON TROUVÉE par la recherche web : vérifier manuellement le programme.")
+    blocs.append("\n".join(lignes))
+    if ecartees or citees_hors:
+        lignes = ["## Sources non officielles (écartées, à ne pas utiliser comme référence)"]
+        lignes += [f"- {r['title']} : {r['url']}" for r in ecartees]
+        lignes += [f"- URL citée dans la fiche : {u}" for u in citees_hors if u not in vues]
+        blocs.append("\n".join(lignes))
+    return "\n\n".join(blocs)
+
+
+def call_sources_agent(client, user_content):
     agent = client.beta.agents.create(
         model=MODEL,
         name="vibeprof-sources-officielles",
@@ -140,145 +265,349 @@ def call_sources_agent(client, demande):
         tools=[{"type": "web_search"}],
     )
     try:
-        response = client.beta.conversations.start(agent_id=agent.id, inputs=demande)
-        textes = []
-        for entry in response.outputs:
-            entry_type = entry.get("type") if isinstance(entry, dict) else getattr(entry, "type", None)
-            if entry_type != "message.output":
-                continue
-            content = entry.get("content", []) if isinstance(entry, dict) else getattr(entry, "content", [])
-            for chunk in content or []:
-                texte = chunk_text(chunk)
-                if texte:
-                    textes.append(texte)
-        return "\n".join(textes)
+        response = client.beta.conversations.start(agent_id=agent.id, inputs=user_content)
+        texte, refs = collect_conversation_output(response)
+        return format_sources(texte, refs)
     finally:
-        client.beta.agents.delete(agent_id=agent.id)
+        try:
+            client.beta.agents.delete(agent_id=agent.id)
+        except Exception as exc:  # le nettoyage ne doit pas faire échouer le cours
+            print(f"  (avertissement : suppression de l'agent {agent.id} impossible : {exc})")
+
+
+def run_agent(client, agent, outputs, corrections=None):
+    user_content = build_input(outputs, agent, corrections)
+    if agent["web"]:
+        return call_sources_agent(client, user_content)
+    return call_agent(client, agent["prompt"], user_content)
+
+
+def dependents(name):
+    """Agents à régénérer (dans l'ordre) quand `name` change : dépendances directes et transitives."""
+    touches, result = {name}, []
+    for agent in AGENTS:
+        if agent["name"] != name and touches.intersection(agent["inputs"]):
+            touches.add(agent["name"])
+            result.append(agent)
+    return result
+
+
+# --------------------------------------------------------------------------- pipeline
+
+def run_pipeline(client, demande, checkpoint=None):
+    outputs = {"demande": demande}
+    total = len(AGENTS)
+    for i, agent in enumerate(AGENTS, 1):
+        print(f"[{i}/{total}] {agent['title']}...")
+        outputs[agent["name"]] = run_agent(client, agent, outputs)
+        if checkpoint:
+            checkpoint(outputs)
+    return outputs
+
+
+def to_float(value):
+    try:
+        return float(str(value).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
 
 
 def extract_json(text):
+    text = (text or "").strip()
+    fence = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
+    if fence:
+        text = fence.group(1)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
         raise ValueError("Aucun JSON trouvé dans la réponse du relecteur")
     return json.loads(match.group(0))
 
 
-def run_pipeline(client, demande):
-    outputs = {}
-    current = demande
-    for name, prompt, use_web in AGENTS:
-        if use_web:
-            current = call_sources_agent(client, current)
-        else:
-            current = call_agent(client, prompt, current)
-        outputs[name] = current
-    return outputs
+def normalize_rapport(rapport):
+    if not isinstance(rapport, dict):
+        raise ValueError("La réponse du relecteur n'est pas un objet JSON")
+    notes = rapport.get("notes") if isinstance(rapport.get("notes"), dict) else {}
+    valeurs = [v for v in (to_float(n) for n in notes.values()) if v is not None]
+    score = to_float(rapport.get("score_global"))
+    if valeurs:  # on recalcule la moyenne plutôt que de faire confiance au calcul du modèle
+        score = round(sum(valeurs) / len(valeurs), 2)
+    consignes = rapport.get("consignes_correction") or []
+    if isinstance(consignes, str):
+        consignes = [consignes]
+    retour = rapport.get("retour_vers")
+    if isinstance(retour, str) and retour.strip().lower() in ("", "null", "none", "aucun"):
+        retour = None
+    return {
+        "score_global": score,
+        "notes": notes,
+        "livraison": "oui" if score is not None and score >= SEUIL_LIVRAISON else "non",
+        "livraison_relecteur": rapport.get("livraison"),
+        "retour_vers": retour,
+        "consignes_correction": [str(c) for c in consignes],
+    }
 
 
-def run_relecture(client, outputs):
-    dossier = "\n\n---\n\n".join(f"## {k}\n{v}" for k, v in outputs.items())
-    rapport_raw = call_agent(client, PROMPT_RELECTEUR, dossier)
-    return extract_json(rapport_raw), rapport_raw
+def run_relecture(client, outputs, tentatives=2):
+    dossier = "\n\n---\n\n".join(f"## {TITRES[k]}\n\n{outputs[k]}" for k in ["demande"] + [a["name"] for a in AGENTS])
+    derniere_erreur, raw = None, ""
+    for _ in range(tentatives):
+        raw = call_agent(client, PROMPT_RELECTEUR, dossier, temperature=0,
+                         response_format={"type": "json_object"})
+        try:
+            return normalize_rapport(extract_json(raw)), raw
+        except (ValueError, json.JSONDecodeError) as exc:
+            derniere_erreur = exc
+    raise ValueError(f"Rapport du relecteur illisible ({derniere_erreur}). Réponse brute : {raw[:500]}")
 
 
-def apply_correction(client, outputs, rapport):
-    match = re.search(r"agent\s*(\d)", rapport.get("retour_vers") or "", re.IGNORECASE)
+def target_agent(rapport):
+    match = re.search(r"(\d+)", str(rapport.get("retour_vers") or ""))
     if not match:
-        return outputs, False
+        return None
     index = int(match.group(1)) - 1
-    if not (1 <= index < len(AGENTS)):
+    return AGENTS[index] if 0 <= index < len(AGENTS) else None
+
+
+def apply_correction(client, outputs, rapport, checkpoint=None):
+    agent = target_agent(rapport)
+    if agent is None:
         return outputs, False
-    name, prompt, use_web = AGENTS[index]
-    consignes = "\n".join(f"- {c}" for c in rapport.get("consignes_correction", []))
-    previous_input = ""
-    if index == 0:
-        previous_input = outputs.get("demande", "")
-    else:
-        previous_input = outputs[AGENTS[index - 1][0]]
-    corrected = call_agent(client, prompt, f"{previous_input}\n\nCORRECTIONS DEMANDÉES PAR LE RELECTEUR :\n{consignes}")
-    outputs[name] = corrected
-    for j in range(index + 1, len(AGENTS)):
-        n, p, w = AGENTS[j]
-        if w:
-            outputs[n] = call_sources_agent(client, outputs[AGENTS[j - 1][0]])
-        else:
-            outputs[n] = call_agent(client, p, outputs[AGENTS[j - 1][0]])
+    print(f"  correction : {agent['title']}...")
+    outputs[agent["name"]] = run_agent(client, agent, outputs, rapport.get("consignes_correction"))
+    if checkpoint:
+        checkpoint(outputs)
+    for suivant in dependents(agent["name"]):
+        print(f"  mise à jour : {suivant['title']}...")
+        outputs[suivant["name"]] = run_agent(client, suivant, outputs)
+        if checkpoint:
+            checkpoint(outputs)
     return outputs, True
 
 
-def build_docx(path, demande, outputs, rapports):
+# --------------------------------------------------------------------------- export .docx
+
+INLINE_RE = re.compile(r"(\*\*[^*]+\*\*|__[^_]+__|\*[^*\s][^*]*\*|`[^`]+`)")
+
+
+def add_inline(paragraph, text):
+    for part in INLINE_RE.split(text):
+        if not part:
+            continue
+        if (part.startswith("**") and part.endswith("**")) or (part.startswith("__") and part.endswith("__")):
+            paragraph.add_run(part[2:-2]).bold = True
+        elif part.startswith("`") and part.endswith("`"):
+            paragraph.add_run(part[1:-1]).font.name = "Courier New"
+        elif part.startswith("*") and part.endswith("*") and len(part) > 2:
+            paragraph.add_run(part[1:-1]).italic = True
+        else:
+            paragraph.add_run(part)
+    return paragraph
+
+
+def _table_cells(line):
+    return [c.strip() for c in line.strip().strip("|").split("|")]
+
+
+def add_table(doc, lines):
+    rows = [_table_cells(l) for l in lines if not re.fullmatch(r"\|?[\s:\-|]+\|?", l.strip())]
+    if not rows:
+        return
+    width = max(len(r) for r in rows)
+    table = doc.add_table(rows=len(rows), cols=width)
+    table.style = "Table Grid"
+    for i, row in enumerate(rows):
+        for j in range(width):
+            cell = table.cell(i, j)
+            cell.text = ""
+            run_par = cell.paragraphs[0]
+            add_inline(run_par, row[j] if j < len(row) else "")
+            if i == 0:
+                for run in run_par.runs:
+                    run.bold = True
+
+
+def add_markdown(doc, text, base_level=1):
+    lines = (text or "").replace("\r\n", "\n").split("\n")
+    i, paragraph_buf = 0, []
+
+    def flush():
+        if paragraph_buf:
+            add_inline(doc.add_paragraph(), " ".join(s.strip() for s in paragraph_buf))
+            paragraph_buf.clear()
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            flush()
+            i += 1
+            code = []
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                code.append(lines[i])
+                i += 1
+            p = doc.add_paragraph()
+            run = p.add_run("\n".join(code))
+            run.font.name = "Courier New"
+            run.font.size = Pt(9)
+        elif not stripped or re.fullmatch(r"(-{3,}|\*{3,}|_{3,})", stripped):
+            flush()
+        elif m := re.match(r"^(#{1,6})\s+(.*)$", stripped):
+            flush()
+            level = min(base_level + len(m.group(1)), 9)
+            doc.add_heading(m.group(2).strip("# ").replace("**", ""), level=level)
+        elif stripped.startswith("|"):
+            flush()
+            table_lines = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                table_lines.append(lines[i])
+                i += 1
+            add_table(doc, table_lines)
+            continue
+        elif m := re.match(r"^(\s*)[-*+•]\s+(.*)$", line):
+            flush()
+            style = "List Bullet 2" if len(m.group(1).replace("\t", "  ")) >= 2 else "List Bullet"
+            add_inline(doc.add_paragraph(style=style), m.group(2))
+        elif m := re.match(r"^(\s*)\d+[.)]\s+(.*)$", line):
+            flush()
+            style = "List Number 2" if len(m.group(1).replace("\t", "  ")) >= 2 else "List Number"
+            add_inline(doc.add_paragraph(style=style), m.group(2))
+        elif stripped.startswith(">"):
+            flush()
+            p = add_inline(doc.add_paragraph(), stripped.lstrip("> "))
+            for run in p.runs:
+                run.italic = True
+        else:
+            paragraph_buf.append(stripped)
+        i += 1
+    flush()
+
+
+def build_docx(path, demande, outputs, rapports, livre):
     doc = Document()
     doc.add_heading("Cours généré", level=0)
-    doc.add_paragraph(f"Demande : {demande}")
-    for name, content in outputs.items():
-        if name == "demande":
-            continue
-        doc.add_heading(name, level=1)
-        for block in re.split(r"\n\s*\n", content.strip()):
-            block = block.strip()
-            if not block:
-                continue
-            if block.startswith("### "):
-                doc.add_heading(block[4:], level=3)
-            elif block.startswith("## "):
-                doc.add_heading(block[3:], level=2)
-            elif block.startswith("# "):
-                doc.add_heading(block[2:], level=1)
-            elif block.startswith("- "):
-                doc.add_paragraph(block[2:], style="List Bullet")
-            else:
-                doc.add_paragraph(block)
+    p = doc.add_paragraph()
+    p.add_run("Demande : ").bold = True
+    p.add_run(demande)
+
+    if not livre:
+        avert = doc.add_paragraph()
+        run = avert.add_run(
+            f"⚠ ATTENTION : le seuil de livraison ({SEUIL_LIVRAISON}/5) n'a pas été atteint après "
+            f"{len(rapports)} relecture(s). Relisez attentivement ce cours avant de l'utiliser."
+        )
+        run.bold = True
+        run.font.color.rgb = RGBColor(0xC0, 0x00, 0x00)
+
+    for agent in AGENTS:
+        doc.add_heading(agent["title"], level=1)
+        add_markdown(doc, outputs.get(agent["name"], ""), base_level=1)
+
     doc.add_heading("Rapports de relecture", level=1)
     for i, r in enumerate(rapports, 1):
         doc.add_heading(f"Itération {i} — score {r.get('score_global')}/5, livraison : {r.get('livraison')}", level=2)
-        doc.add_paragraph(json.dumps(r, ensure_ascii=False, indent=2))
+        notes = r.get("notes") or {}
+        if notes:
+            table = doc.add_table(rows=1, cols=2)
+            table.style = "Table Grid"
+            table.cell(0, 0).text, table.cell(0, 1).text = "Critère", "Note /5"
+            for key, val in notes.items():
+                cells = table.add_row().cells
+                cells[0].text, cells[1].text = CRITERES.get(key, key), str(val)
+        if r.get("retour_vers"):
+            doc.add_paragraph(f"Renvoi vers : {r['retour_vers']}")
+        for c in r.get("consignes_correction") or []:
+            add_inline(doc.add_paragraph(style="List Bullet"), c)
     doc.save(path)
 
 
+# --------------------------------------------------------------------------- main
+
+def make_client(api_key):
+    retry = RetryConfig(
+        "backoff",
+        BackoffStrategy(initial_interval=2000, max_interval=60000, exponent=2, max_elapsed_time=300000),
+        retry_connection_errors=True,
+    )
+    return Mistral(api_key=api_key, retry_config=retry, timeout_ms=300000)
+
+
 def main():
+    global MODEL
     parser = argparse.ArgumentParser(description="Workflow agentique de création de cours (Mistral)")
     parser.add_argument("demande", help="Demande du prof, ex: 'Terminale bac pro Commerce, thème: la mondialisation, 2h, TD'")
     parser.add_argument("--outdir", default="output")
+    parser.add_argument("--model", default=MODEL, help=f"Modèle Mistral (défaut : {MODEL}, ou $MISTRAL_MODEL)")
+    parser.add_argument("--max-relectures", type=int, default=MAX_RELECTURES)
     args = parser.parse_args()
+    MODEL = args.model
 
     api_key = os.environ.get("MISTRAL_API_KEY")
     if not api_key:
         sys.exit("Erreur : variable d'environnement MISTRAL_API_KEY manquante.")
 
-    client = Mistral(api_key=api_key)
+    client = make_client(api_key)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     outdir = Path(args.outdir) / stamp
     outdir.mkdir(parents=True, exist_ok=True)
 
-    print("[1/7] Lancement de la chaîne d'agents...")
-    outputs = run_pipeline(client, args.demande)
-    outputs["demande"] = args.demande
-
     rapports = []
-    for iteration in range(1, MAX_RELECTURES + 1):
-        print(f"[relecture {iteration}/{MAX_RELECTURES}] Évaluation par le relecteur...")
-        rapport, raw = run_relecture(client, outputs)
-        rapports.append(rapport)
-        print(f"  score = {rapport.get('score_global')}/5, livraison = {rapport.get('livraison')}")
-        if rapport.get("livraison") == "oui" or float(rapport.get("score_global", 0)) >= SEUIL_LIVRAISON:
+
+    def save(outputs, statut="en_cours", livre=False):
+        final = {
+            "demande": args.demande,
+            "modele": MODEL,
+            "statut": statut,
+            "livre": livre,
+            "dossier": outputs,
+            "rapports_relecture": rapports,
+            "iterations": len(rapports),
+        }
+        (outdir / "cours_final.json").write_text(json.dumps(final, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    print("Lancement de la chaîne d'agents...")
+    try:
+        outputs = run_pipeline(client, args.demande, checkpoint=save)
+    except Exception as exc:
+        sys.exit(f"Erreur pendant la génération : {exc}\nProductions partielles : {outdir}/cours_final.json")
+
+    livre = False
+    statut = "termine"
+    for iteration in range(1, args.max_relectures + 1):
+        print(f"[relecture {iteration}/{args.max_relectures}] Évaluation par le relecteur...")
+        try:
+            rapport, _ = run_relecture(client, outputs)
+        except Exception as exc:
+            print(f"  relecture impossible : {exc}")
+            statut = "relecture_en_erreur"
             break
-        if iteration < MAX_RELECTURES:
+        rapports.append(rapport)
+        save(outputs)
+        print(f"  score = {rapport['score_global']}/5, livraison = {rapport['livraison']}")
+        if rapport["livraison"] == "oui":
+            livre = True
+            break
+        if iteration < args.max_relectures:
             print(f"  retour vers {rapport.get('retour_vers')} avec consignes de correction...")
-            outputs, corrected = apply_correction(client, outputs, rapport)
+            try:
+                outputs, corrected = apply_correction(client, outputs, rapport, checkpoint=save)
+            except Exception as exc:
+                print(f"  correction impossible : {exc}")
+                statut = "correction_en_erreur"
+                break
             if not corrected:
+                print("  aucun agent valide désigné pour la correction, arrêt des relectures.")
                 break
 
-    final = {
-        "demande": args.demande,
-        "dossier": outputs,
-        "rapports_relecture": rapports,
-        "iterations": len(rapports),
-    }
-    (outdir / "cours_final.json").write_text(json.dumps(final, ensure_ascii=False, indent=2), encoding="utf-8")
+    save(outputs, statut=statut, livre=livre)
+    build_docx(outdir / "cours_final.docx", args.demande, outputs, rapports, livre)
 
-    build_docx(outdir / "cours_final.docx", args.demande, outputs, rapports)
-
-    print(f"Terminé en {len(rapports)} itération(s). Résultat : {outdir}/cours_final.docx")
+    if not livre:
+        print(f"⚠ Seuil de {SEUIL_LIVRAISON}/5 non atteint : cours à relire attentivement.")
+    print(f"Terminé en {len(rapports)} relecture(s). Résultat : {outdir}/cours_final.docx")
 
 
 if __name__ == "__main__":
