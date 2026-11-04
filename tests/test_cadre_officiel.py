@@ -68,14 +68,17 @@ class CadreOfficielTests(unittest.TestCase):
         self.assertIn("Contextualiser", fiches["03_capacites.md"]["corps"])
         self.assertIn("La vie démocratique : débat, délibération et prise de décision", fiches["06_emc.md"]["corps"])
         self.assertIn("EMC", cw.PROMPT_SOURCES)  # consigne propre à la structure du programme d'EMC
-        self.assertIn("06_emc.md", cw.PROMPT_EVALUATION)
+        self.assertNotIn("06_emc.md", cw.PROMPT_EVALUATION)  # fiche transmise seulement pour une séance d'EMC
+        from contexte import Contexte
+        self.assertIn("06_emc.md", cw.cadre_contextuel("EVALUATION", Contexte("terminale", "EMC", 55)))
+        self.assertNotIn("06_emc.md", cw.cadre_contextuel("EVALUATION", Contexte("terminale", "histoire", 55)))
 
     def test_consignes_de_conformite(self):
         self.assertIn("## Recommandations officielles de mise en œuvre", cw.PROMPT_SOURCES)
         self.assertIn("## Attendus de l'examen", cw.PROMPT_SOURCES)
         self.assertIn("en vigueur", cw.PROMPT_SOURCES)
-        self.assertIn("## Conformité aux recommandations officielles", cw.PROMPT_CONCEPTION)
-        self.assertIn("Capacité du programme", cw.PROMPT_EVALUATION)
+        self.assertIn("conformite", cw.PROMPT_CONCEPTION)
+        self.assertIn("capacité du programme", cw.PROMPT_EVALUATION)
         self.assertIn("1_referentiel_officiel", cw.AGENTS_BY_NAME["3_deroule"]["inputs"])
         self.assertIn("1_referentiel_officiel", cw.AGENTS_BY_NAME["6_evaluation"]["inputs"])
 

@@ -4,7 +4,7 @@ Workflow agentique (API Mistral) qui génère une séance d'histoire-géographie
 
 ## Interface web (sans environnement de développement)
 
-VibeProf s'utilise depuis le navigateur : on remplit un formulaire (classe, spécialité, discipline, thème, durée, format), on suit la progression sur un **graphe du workflow** mis à jour en direct (agent en cours, terminé avec sa durée, renvois du relecteur en pointillés), puis on télécharge les documents Word (un par un ou en `.zip`) et on les prévisualise.
+VibeProf s'utilise depuis le navigateur : on remplit un formulaire (classe, spécialité, discipline, thème choisi parmi les thèmes officiels en vigueur ou saisi librement, durée, format), on suit la progression sur un **graphe du workflow** mis à jour en direct (agent en cours, terminé avec sa durée, renvois du relecteur en pointillés), puis on télécharge les documents Word (un par un ou en `.zip`) et on les prévisualise.
 
 Il faut une **clé API Mistral** (à créer sur [console.mistral.ai](https://console.mistral.ai)) : elle se saisit dans la barre latérale et n'est jamais enregistrée.
 
@@ -38,20 +38,32 @@ Le `.zip` contient `cours_final.json`. Le déposer plus tard dans « Rouvrir un 
 | # | Agent | Reçoit | Modèle | Temp. |
 |---|-------|--------|--------|-------|
 | 1 | Référentiel officiel (recherche web, eduscol / education.gouv uniquement) | demande | principal | 0,1 |
-| 2 | Cadrage | demande, référentiel | principal | 0,2 |
-| 3 | Déroulé de séance | demande, cadrage | principal | 0,5 |
+| 2 | Cadrage (problématique, objectifs, découpage horaire) | demande, référentiel | principal | 0,2 |
+| 3 | Déroulé de séance | demande, référentiel, cadrage | principal | 0,5 |
 | 4 | Support de cours | cadrage, déroulé | principal | 0,4 |
 | 5 | Documents élèves (recherche web, sources vérifiables) | cadrage, déroulé, support | principal | 0,5 |
-| 6 | Évaluation | cadrage, support | léger | 0,3 |
-| – | Relecteur (raisonnement `high`) | tout le dossier | léger | 0 |
+| 6 | Évaluation formative | référentiel, cadrage, support | léger | 0,3 |
+| – | Relecteur (raisonnement `high`) | tout le dossier + contrôles automatiques | léger | 0 |
 
-Tous les agents partagent un contexte commun : public de lycée pro, HG-EMC, vocabulaire officiel des programmes (notions et mots-clés, capacités, repères), sortie en markdown, interdiction d'inventer. L'agent 1 recopie mot pour mot les rubriques du programme ; l'agent 3 fixe la liste numérotée des documents (Doc 1, Doc 2…) que l'agent 5 produit à l'identique ; documents élèves et évaluation séparent « Partie élève » et « Partie professeur ».
+**Sorties structurées.** Chaque agent rend un objet JSON strict (schémas dans [`schemas.py`](schemas.py), noms de champs en français) ; les agents 1 et 5 font d'abord leur recherche web en texte libre, puis une étape de structuration la convertit fidèlement. Le programme produit ensuite le markdown lu par les agents suivants et les documents Word. Ce qui se calcule (durée totale, correspondance questions / objectifs) est calculé par le code, pas demandé au modèle.
 
-Un **relecteur** fait ensuite 5 vérifications (durée totale, cohérence des documents, objectifs évalués, programme repris, parties séparées) et note le dossier sur 5 critères avec une grille détaillée. Si la moyenne est sous 4/5, il désigne un ou plusieurs agents à refaire avec des consignes ; ces agents et ceux qui en dépendent sont régénérés, chacun une seule fois (3 relectures max).
+**Contrôles automatiques** ([`controles.py`](controles.py)), avant chaque relecture :
 
-Les sources trouvées par la recherche web sont listées à la fin des productions 1 et 5 :
-- référentiel : seules les sources des domaines officiels sont retenues, les autres sont signalées comme écartées ;
-- documents élèves : toutes les sources consultées sont listées, et les URL citées sans provenir de la recherche sont signalées « à vérifier ».
+| Contrôle | Gravité |
+|---|---|
+| durée du découpage et du déroulé = durée effective demandée (une heure de cours = 55 min) | bloquant |
+| documents produits = documents prévus par le déroulé | bloquant |
+| document présenté comme authentique sans URL | bloquant |
+| capacités citées = intitulés du tableau officiel (histoire-géographie) | bloquant |
+| chaque objectif évalué par au moins une question | bloquant |
+| longueurs (textes, support, consignes, nombre d'étapes) adaptées à la classe | alerte, bloquant si très excessif |
+| forme du quiz, URL non consultée, programme hors site officiel | alerte |
+
+Un contrôle bloquant renvoie l'agent concerné avec un message précis, sans attendre le relecteur, et empêche la livraison. Le relecteur reçoit les résultats et se concentre sur ce que le code ne peut pas juger (pédagogie, exactitude, programme en vigueur, recommandations appliquées, sujets sensibles). Les points restants figurent dans la fiche professeur (« Points à vérifier avant utilisation ») et dans l'interface.
+
+**Adapté aux professeurs français.** Vocabulaire de l'Éducation nationale (séance, problématique, consigne, trace écrite, évaluation formative, différenciation, élèves à besoins éducatifs particuliers), aucun calque de l'anglais, consignes à l'impératif, typographie française dans les documents Word (« guillemets », espaces insécables). Consignes propres à chaque classe ([`contexte.py`](contexte.py) : longueur des phrases et des textes, nombre de documents) et fiches officielles filtrées par classe et par discipline.
+
+**Sujets sensibles et sécurité.** Neutralité et laïcité, faits historiques établis présentés avec rigueur (génocides, traites et esclavage, colonisation…), questions vives présentées sans prise de parti, documents adaptés à l'âge. La demande du professeur est transmise comme une donnée balisée, jamais comme une instruction.
 
 ## Cadre officiel
 
@@ -118,6 +130,17 @@ Pour retoucher la mise en page sans relancer les agents (aucun appel à l'API) :
 ```bash
 python course_workflow.py --rendu output/<horodatage>/cours_final.json
 ```
+
+## Banc d'évaluation
+
+[`evaluation/cas.json`](evaluation/cas.json) contient 14 demandes types sur des thèmes officiels (CAP, seconde, première, terminale ; histoire, géographie, EMC). Le banc génère un cours pour chacune et produit un rapport (livraison, score, notes par critère, contrôles restants, longueurs, durée) pour comparer les versions de VibeProf :
+
+```bash
+python evaluation/banc.py --limite 3        # appels réels à l'API : coût réel
+python evaluation/banc.py --simulation      # vérifie le banc lui-même, sans API
+```
+
+Résultats dans `evaluation/resultats/<horodatage>/rapport.md`.
 
 ## Tests
 

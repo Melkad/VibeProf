@@ -11,12 +11,16 @@ sys.path[:0] = [str(ROOT), str(ROOT / "tests"), str(ROOT / "tests" / "fixtures")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
 import course_workflow as cw  # noqa: E402
+import exemple_cours as ex  # noqa: E402
 from test_course_workflow import RAPPORT_OK, FakeClient, rapport_ko  # noqa: E402
 
 APP = str(ROOT / "app.py")
+AUTRE = "Autre thème (saisie libre)"
 
 
 def remplir(at, theme="La mondialisation"):
+    """Thème saisi librement (choix « Autre thème »)."""
+    at.selectbox(key="theme_officiel").set_value(AUTRE).run()
     at.text_input(key="theme").input(theme)
     return at
 
@@ -43,24 +47,43 @@ class AppTests(unittest.TestCase):
 
     def test_theme_et_cle_obligatoires(self):
         at = self.run_app()
+        at.selectbox(key="theme_officiel").set_value(AUTRE).run()
         at.button[0].click().run()
         self.assertIn("thème", at.error[0].value)
         remplir(at).button[0].click().run()
         self.assertIn("clé API", at.error[0].value)
+
+    def test_themes_officiels_selon_classe_et_discipline(self):
+        at = self.run_app()
+        at.selectbox(key="classe").set_value("Seconde bac pro").run()
+        at.radio(key="discipline").set_value("Géographie").run()
+        options = at.selectbox(key="theme_officiel").options
+        self.assertEqual(options, ["Des réseaux de production et d'échanges mondialisés",
+                                   "Une circulation croissante mais diverse des personnes à l'échelle mondiale",
+                                   AUTRE])
+        at.selectbox(key="classe").set_value("Première bac pro").run()
+        at.radio(key="discipline").set_value("EMC").run()
+        self.assertEqual(at.selectbox(key="theme_officiel").options,
+                         ["Les valeurs et les principes de la République à l'épreuve de la cohésion sociale",
+                          "La République et la Nation", AUTRE])
+        self.assertEqual(at.selectbox(key="duree").format_func("2 h"), "2 h (110 min de cours)")
 
     def test_generation_complete(self):
         client = FakeClient(rapports=[rapport_ko("agent 3"), RAPPORT_OK])
         with mock.patch.object(cw, "make_client", return_value=client):
             at = self.run_app()
             at.text_input(key="cle_api").input("cle-test")
-            remplir(at, "La France dans la mondialisation")
+            at.selectbox(key="classe").set_value("Seconde bac pro").run()
+            at.radio(key="discipline").set_value("Géographie").run()
             at.text_input(key="specialite").input("Commerce")
             at.button[0].click().run()
         self.assertFalse(at.exception, at.exception)
         demande = client.calls[1][2]  # entrée de l'agent 1
-        self.assertIn("Terminale bac pro Commerce, histoire", demande)
-        self.assertIn("thème : La France dans la mondialisation, 2 h", demande)
+        self.assertIn("Seconde bac pro Commerce, géographie", demande)
+        self.assertIn("thème : Des réseaux de production et d'échanges mondialisés, 2 h", demande)
+        self.assertIn("Durée effective de la séance : 110 minutes", demande)  # contexte du formulaire
         self.assertIn("Contrôle qualité : 4.4/5 après 2 relecture(s).", [s.value for s in at.success])
+        self.assertTrue(any("Contrôles automatiques" in e.label for e in at.expander))
         res = at.session_state["resultat"]
         self.assertEqual(sorted(res["fichiers"]), ["1_fiche_professeur.docx", "2_cours_eleve.docx",
                                                    "3_documents_eleves.docx", "4_evaluation_eleve.docx",

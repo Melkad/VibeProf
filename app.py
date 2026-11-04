@@ -15,11 +15,15 @@ from pathlib import Path
 import streamlit as st
 
 import course_workflow as cw
+from contexte import THEMES_OFFICIELS, Contexte, duree_effective
 from suivi_workflow import SuiviWorkflow
 
 st.set_page_config(page_title="VibeProf", page_icon="📚", layout="centered")
 
 CLASSES = ["Seconde bac pro", "Première bac pro", "Terminale bac pro", "CAP 1re année", "CAP 2e année"]
+CLASSE_CODE = {"Seconde bac pro": "seconde", "Première bac pro": "première", "Terminale bac pro": "terminale",
+               "CAP 1re année": "CAP", "CAP 2e année": "CAP"}
+AUTRE_THEME = "Autre thème (saisie libre)"
 DISCIPLINES = ["Histoire", "Géographie", "EMC"]
 DUREES = ["55 min", "1 h", "1 h 30", "2 h", "3 h"]
 FORMATS = ["Étude de documents (TD)", "Cours dialogué", "Travail en groupes", "Mise en situation / jeu de rôle",
@@ -98,6 +102,11 @@ def barre_laterale():
 
 # --------------------------------------------------------------------------- génération
 
+def contexte_formulaire(classe, discipline, duree):
+    code = discipline if discipline == "EMC" else discipline.lower()
+    return Contexte(CLASSE_CODE.get(classe), code, duree_effective(duree))
+
+
 def construire_demande(classe, specialite, discipline, theme, duree, format_, precisions):
     demande = f"{classe}"
     if specialite.strip():
@@ -123,7 +132,7 @@ def memoriser(demande, dossier_sortie, fichiers, livre, rapports, dossier, graph
     }
 
 
-def generer(cle, modeles, relectures, demande):
+def generer(cle, modeles, relectures, demande, contexte=None):
     statut = st.status("Génération du cours en cours… (plusieurs minutes, ne fermez pas la page)", expanded=True)
     with statut:
         barre = st.progress(0.0, text="Préparation")
@@ -147,7 +156,8 @@ def generer(cle, modeles, relectures, demande):
     cw.configurer_session(modeles, journal=journal, evenements=suivi.recevoir)
     with tempfile.TemporaryDirectory(prefix="vibeprof_") as tmp:
         try:
-            res = cw.generer_cours(cw.make_client(cle), demande, Path(tmp), relectures, avancement=avancement)
+            res = cw.generer_cours(cw.make_client(cle), demande, Path(tmp), relectures, avancement=avancement,
+                                   contexte=contexte)
         except cw.GenerationError as exc:
             suivi.marquer_erreur(str(exc))
             statut.update(label="La génération a échoué", state="error", expanded=True)
@@ -219,6 +229,15 @@ def afficher_resultat(res):
             st.warning(f"Contrôle qualité : {score}/5, sous le seuil de {cw.SEUIL_LIVRAISON}/5. "
                        "Relisez attentivement le cours avant de l'utiliser (détails dans la fiche professeur).")
 
+        liste = dernier.get("controles") or []
+        with st.expander(f"Contrôles automatiques ({len(liste)} point(s) à vérifier)" if liste
+                         else "Contrôles automatiques : aucun problème détecté"):
+            st.caption("Vérifiés par le programme : durées, documents prévus et produits, capacités officielles, "
+                       "objectifs évalués, sources, longueurs.")
+            for c in liste:
+                icone = "⛔" if c["gravite"] == "bloquant" else "⚠️"
+                st.markdown(f"{icone} **{cw.AGENTS[c['agent'] - 1]['title']}** — {c['message']}")
+
     if res.get("graphe"):
         with st.expander("Parcours du workflow"):
             st.graphviz_chart(res["graphe"], use_container_width=True)
@@ -266,19 +285,27 @@ def main():
     st.markdown("Créez une séance d'**histoire-géographie-EMC pour le lycée professionnel**, ancrée dans le "
                 "programme officiel : fiche professeur, cours, documents et évaluation prêts à imprimer.")
 
-    with st.form("demande"):
+    with st.container(border=True):
         c1, c2 = st.columns(2)
-        classe = c1.selectbox("Classe", CLASSES, index=2)
+        classe = c1.selectbox("Classe", CLASSES, index=2, key="classe")
         specialite = c2.text_input("Spécialité", key="specialite", placeholder="ex : Métiers du commerce et de la vente")
-        discipline = st.radio("Discipline", DISCIPLINES, horizontal=True)
-        theme = st.text_input("Thème de la séance *", key="theme",
-                              placeholder="ex : La France et l'Union européenne dans la mondialisation")
+        discipline = st.radio("Discipline", DISCIPLINES, horizontal=True, key="discipline")
+        contexte = contexte_formulaire(classe, discipline, "")
+        themes = THEMES_OFFICIELS.get((contexte.classe, contexte.discipline), [])
+        choix = st.selectbox("Thème du programme officiel", themes + [AUTRE_THEME], key="theme_officiel",
+                             help="Thèmes des programmes en vigueur pour cette classe et cette discipline.")
+        theme = choix
+        if choix == AUTRE_THEME:
+            theme = st.text_input("Thème de la séance *", key="theme",
+                                  placeholder="ex : une étude de cas sur un port de commerce")
         c3, c4 = st.columns(2)
-        duree = c3.selectbox("Durée", DUREES, index=3)
-        format_ = c4.selectbox("Format", FORMATS)
-        precisions = st.text_area("Précisions (facultatif)", height=80,
+        duree = c3.selectbox("Durée", DUREES, index=3, key="duree",
+                             format_func=lambda d: f"{d} ({duree_effective(d)} min de cours)",
+                             help="Une heure de cours compte 55 minutes.")
+        format_ = c4.selectbox("Format", FORMATS, key="format")
+        precisions = st.text_area("Précisions (facultatif)", height=80, max_chars=800, key="precisions",
                                   placeholder="ex : classe avec plusieurs élèves allophones ; insister sur la carte")
-        envoye = st.form_submit_button("Générer le cours", type="primary", use_container_width=True)
+        envoye = st.button("Générer le cours", type="primary", use_container_width=True)
 
     if envoye:
         if not theme.strip():
@@ -288,7 +315,8 @@ def main():
         else:
             st.session_state.pop("resultat", None)
             generer(cle, modeles, relectures,
-                    construire_demande(classe, specialite, discipline, theme, duree, format_, precisions))
+                    construire_demande(classe, specialite, discipline, theme, duree, format_, precisions),
+                    contexte_formulaire(classe, discipline, duree))
 
     if "resultat" in st.session_state:
         afficher_resultat(st.session_state["resultat"])

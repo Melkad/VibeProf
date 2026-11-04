@@ -10,7 +10,10 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
 
+import copy  # noqa: E402
+
 import course_workflow as cw  # noqa: E402
+import exemple_cours as ex  # noqa: E402
 from docx import Document  # noqa: E402
 from mistralai.client.errors import MistralError  # noqa: E402
 
@@ -24,15 +27,26 @@ def ns(**kw):
 
 
 class FakeClient:
-    """Faux client Mistral : enregistre les appels et renvoie des réponses scriptées."""
+    """Faux client Mistral : enregistre les appels et renvoie des réponses scriptées.
 
-    def __init__(self, rapports=None, content_as_list=False, refused_models=(), no_reasoning_models=()):
+    Les agents rendent les productions structurées de l'exemple (tests/fixtures/exemple_cours.py), modifiables
+    par `structures` ; `invalides` : noms d'agents dont la première réponse n'est pas conforme au schéma."""
+
+    def __init__(self, rapports=None, content_as_list=False, refused_models=(), no_reasoning_models=(),
+                 structures=None, invalides=(), references=None):
         self.calls = []
         self.refused_models = set(refused_models)
         self.no_reasoning_models = set(no_reasoning_models)
-        self.models = []  # (system prompt ou nom d'agent, modèle, reasoning_effort, temperature)
+        self.models = []  # (system prompt ou instructions, modèle, reasoning_effort, temperature)
         self.rapports = list(rapports or [])
         self.content_as_list = content_as_list
+        self.structures = copy.deepcopy(structures or ex.STRUCTURES)
+        self.invalides = set(invalides)
+        self.references = references if references is not None else {
+            "1_referentiel_officiel": [("Programme HG bac pro", "https://eduscol.education.fr/1234/programme"),
+                                       ("Wikipédia", "https://fr.wikipedia.org/wiki/X")],
+            "5_documents_eleves": [("Gallica", "https://gallica.bnf.fr/ark:/1")]}
+        self.response_formats = []
         self.deleted = []
         self.chat = ns(complete=self._complete)
         self.beta = ns(
@@ -56,10 +70,14 @@ class FakeClient:
         self._check_model(model, reasoning_effort)
         self.models.append((system, model, reasoning_effort, temperature))
         self.calls.append(("chat", system, user))
+        self.response_formats.append(response_format)
         if system == cw.PROMPT_RELECTEUR:
             return self._reply(json.dumps(self.rapports.pop(0)))
-        agent = next(a for a in cw.AGENTS if a["prompt"] == system)
-        return self._reply(f"# {agent['title']}\n\nSortie de {agent['name']}")
+        agent = next(a for a in cw.AGENTS if system in (a["prompt"], a.get("prompt_structuration")))
+        if agent["name"] in self.invalides:
+            self.invalides.discard(agent["name"])
+            return self._reply('{"incomplet": true}')
+        return self._reply(json.dumps(self.structures[agent["name"]], ensure_ascii=False))
 
     def _create_agent(self, model, name, instructions, tools, completion_args):
         self._check_model(model, completion_args.get("reasoning_effort"))
@@ -74,21 +92,11 @@ class FakeClient:
 
     def _start(self, agent_id, inputs):
         self.calls.append(("web", self.current_agent, inputs))
-        if self.current_agent == cw.PROMPT_DOCUMENTS:
-            return ns(outputs=[ns(type="message.output", content=[
-                ns(type="text", text="Texte de Jaurès (https://gallica.bnf.fr/ark:/1) ; voir https://invente.example/x"),
-                ns(type="tool_reference", title="Gallica", url="https://gallica.bnf.fr/ark:/1", tool="web_search"),
-            ])])
-        return ns(outputs=[
-            ns(type="tool.execution"),
-            ns(type="message.output", content=[
-                ns(type="text", text="Programme de terminale. Voir aussi https://blog.exemple.com/cours."),
-                ns(type="tool_reference", title="Programme HG bac pro",
-                   url="https://eduscol.education.fr/1234/programme", tool="web_search"),
-                ns(type="tool_reference", title="Wikipédia", url="https://fr.wikipedia.org/wiki/X",
-                   tool="web_search"),
-            ]),
-        ])
+        agent = next(a for a in cw.AGENTS if a["prompt"] == self.current_agent)
+        refs = [ns(type="tool_reference", title=t, url=u, tool="web_search")
+                for t, u in self.references.get(agent["name"], [])]
+        return ns(outputs=[ns(type="tool.execution"), ns(type="message.output", content=[
+            ns(type="text", text=ex.RECHERCHES[agent["name"]]), *refs])])
 
     def inputs_for(self, agent_name):
         prompt = cw.AGENTS_BY_NAME[agent_name]["prompt"]
@@ -96,6 +104,14 @@ class FakeClient:
 
     def model_of(self, prompt):
         return [m for m in self.models if m[0] == prompt][-1]
+
+
+PROMPTS_PRINCIPAUX = [a["prompt"] for a in cw.AGENTS]
+
+
+def principaux(calls, genre=None):
+    """Prompts des appels principaux des agents (sans les étapes de structuration ni le relecteur)."""
+    return [c[1] for c in calls if c[0] in ((genre,) if genre else ("chat", "web")) and c[1] in PROMPTS_PRINCIPAUX]
 
 
 RAPPORT_OK = {"score_global": 4.4, "notes": {"c1_ancrage_programme": 5, "c2_deroule": 4,
@@ -116,31 +132,61 @@ class RouteurReset(unittest.TestCase):
 class PipelineTests(RouteurReset):
     def test_agents_receive_all_declared_inputs(self):
         client = FakeClient()
-        out = cw.run_pipeline(client, "Terminale bac pro, mondialisation, 2h")
+        out = cw.run_pipeline(client, ex.DEMANDE)
         cadrage_in = client.inputs_for("2_cadrage")[0]
-        self.assertIn("Terminale bac pro, mondialisation, 2h", cadrage_in)
-        self.assertIn("eduscol.education.fr/1234", cadrage_in)
+        self.assertIn(f"<demande_du_professeur>\n{ex.DEMANDE}\n</demande_du_professeur>", cadrage_in)
+        self.assertIn("Des réseaux de production et d'échanges mondialisés", cadrage_in)  # fiche de l'agent 1
+        self.assertIn("## Consignes pour cette classe et cette discipline", cadrage_in)
+        self.assertIn("Durée effective de la séance : 110 minutes", cadrage_in)
+        self.assertIn("07_classe_seconde.md", cadrage_in)
+        self.assertIn("08_discipline_geographie.md", cadrage_in)
+        self.assertNotIn("06_emc.md", cadrage_in)
         eval_in = client.inputs_for("6_evaluation")[0]
-        self.assertIn("Sortie de 2_cadrage", eval_in)
-        self.assertIn("Sortie de 4_support_cours", eval_in)
-        self.assertNotIn("Sortie de 5_documents_eleves", eval_in)
+        self.assertIn("## Problématique", eval_in)
+        self.assertIn("## Ce que je retiens", eval_in)
+        self.assertNotIn("## Partie élève", eval_in)  # l'évaluation ne reçoit pas les documents élèves
         docs_in = client.inputs_for("5_documents_eleves")[0]
-        for n in ("2_cadrage", "3_deroule", "4_support_cours"):
-            self.assertIn(f"Sortie de {n}", docs_in)
+        for marque in ("## Problématique", "## Déroulé", "# Le voyage d'un produit mondialisé"):
+            self.assertIn(marque, docs_in)
         self.assertEqual(client.deleted, ["ag_1", "ag_1"])  # agents web 1 et 5 nettoyés
-        self.assertTrue(all(isinstance(v, str) for v in out.values()))
+        self.assertEqual(set(out["_structures"]), {a["name"] for a in cw.AGENTS})
+        self.assertEqual(out["_contexte"], {"classe": "seconde", "discipline": "géographie", "duree_min": 110})
+        for a in cw.AGENTS:
+            self.assertIsInstance(out[a["name"]], str)
+
+    def test_structured_outputs(self):
+        client = FakeClient()
+        out = cw.run_pipeline(client, ex.DEMANDE)
+        formats = [f for f in client.response_formats if f]
+        self.assertTrue(all(f["type"] == "json_schema" and f["json_schema"]["strict"] for f in formats))
+        self.assertEqual(len(formats), 6)  # 4 agents rédacteurs + 2 structurations après recherche web
+        self.assertEqual(out["3_deroule"], ex.OUTPUTS["3_deroule"])
+        self.assertIn("**Total : 110 min**", out["3_deroule"])  # total calculé par le programme
 
     def test_list_content_is_normalized(self):
-        out = cw.run_pipeline(FakeClient(content_as_list=True), "demande")
-        self.assertEqual(out["3_deroule"], "# Déroulé de séance\n\nSortie de 3_deroule")
+        out = cw.run_pipeline(FakeClient(content_as_list=True), ex.DEMANDE)
+        self.assertEqual(out["3_deroule"], ex.OUTPUTS["3_deroule"])
+
+    def test_invalid_json_is_retried(self):
+        client = FakeClient(invalides={"2_cadrage"})
+        out = cw.run_pipeline(client, ex.DEMANDE)
+        appels = [c for c in client.calls if c[0] == "chat" and c[1] == cw.PROMPT_CADRAGE]
+        self.assertEqual(len(appels), 2)
+        self.assertEqual(out["2_cadrage"], ex.OUTPUTS["2_cadrage"])
+
+    def test_invalid_json_twice_fails(self):
+        client = FakeClient()
+        client.chat.complete = lambda **kw: ns(choices=[ns(message=ns(content='{"rien": 1}'))])
+        with self.assertRaises(ValueError):
+            cw.call_structured(client, cw.AGENTS_BY_NAME["2_cadrage"], "x", cw.schemas.Cadrage)
 
     def test_sources_are_kept_and_filtered(self):
-        out = cw.run_pipeline(FakeClient(), "demande")
+        out = cw.run_pipeline(FakeClient(), ex.DEMANDE)
         ref = out["1_referentiel_officiel"]
         officielles, _, ecartees = ref.partition("Sources non officielles")
         self.assertIn("https://eduscol.education.fr/1234/programme", officielles.split("Sources officielles consultées")[1])
         self.assertIn("fr.wikipedia.org", ecartees)
-        self.assertIn("blog.exemple.com", ecartees)
+        self.assertEqual(out["_references"]["5_documents_eleves"], ["https://gallica.bnf.fr/ark:/1"])
 
     def test_is_official_url(self):
         self.assertTrue(cw.is_official_url("https://eduscol.education.fr/x"))
@@ -157,7 +203,8 @@ class PipelineTests(RouteurReset):
         web = [c for c in client.calls if c[0] == "web"]
         self.assertEqual([c[1] for c in web], [cw.PROMPT_SOURCES, cw.PROMPT_DOCUMENTS])
         self.assertIn("Revoir la durée", web[0][2])
-        self.assertEqual(len([c for c in client.calls if c[0] == "chat"]), 4)
+        self.assertEqual(principaux(client.calls, "chat"),
+                         [cw.PROMPT_CADRAGE, cw.PROMPT_CONCEPTION, cw.PROMPT_REDACTION, cw.PROMPT_EVALUATION])
 
     def test_correction_only_reruns_dependents(self):
         client = FakeClient()
@@ -167,7 +214,7 @@ class PipelineTests(RouteurReset):
         self.assertEqual(len(client.calls), 1)  # personne ne dépend de l'évaluation
         client.calls.clear()
         cw.apply_correction(client, out, cw.normalize_rapport(rapport_ko("agent 4")))
-        rerun = [c[1] for c in client.calls if c[0] in ("chat", "web")]
+        rerun = principaux(client.calls)
         self.assertEqual(rerun, [cw.PROMPT_REDACTION, cw.PROMPT_DOCUMENTS, cw.PROMPT_EVALUATION])
 
     def test_invalid_target(self):
@@ -222,12 +269,17 @@ class ModelesTests(RouteurReset):
             cw.call_agent(client, cw.AGENTS_BY_NAME["2_cadrage"], "x")
 
     def test_documents_sources_not_restricted_to_official(self):
-        out = cw.run_pipeline(FakeClient(), "demande")
+        structures = copy.deepcopy(ex.STRUCTURES)
+        doc = structures["5_documents_eleves"]["documents"][0]
+        doc.update(authentique=True, auteur="Un auteur", date="1905", url="https://invente.example/x")
+        out = cw.run_pipeline(FakeClient(structures=structures), ex.DEMANDE)
         docs = out["5_documents_eleves"]
         consultees, _, a_verifier = docs.partition("URL citées non issues de la recherche")
         self.assertIn("https://gallica.bnf.fr/ark:/1", consultees.split("Sources consultées")[1])
         self.assertIn("invente.example", a_verifier)
         self.assertNotIn("gallica", a_verifier)
+        alertes = [c for c in cw.controles_du_dossier(out) if c.code == "sources"]
+        self.assertEqual([(c.agent, c.gravite) for c in alertes], [(5, "alerte")])
 
 
 class PromptsTests(unittest.TestCase):
@@ -245,14 +297,22 @@ class PromptsTests(unittest.TestCase):
             self.assertIn(mot, cw.PROMPT_SOURCES)
 
     def test_parties_eleve_professeur(self):
-        for prompt in (cw.PROMPT_DOCUMENTS, cw.PROMPT_EVALUATION):
-            self.assertIn("## Partie élève", prompt)
-            self.assertIn("## Partie professeur", prompt)
+        self.assertIn("## Partie élève", cw.PROMPT_DOCUMENTS)
+        self.assertIn("## Partie professeur", cw.PROMPT_DOCUMENTS)
+        for nom in ("5_documents_eleves", "6_evaluation"):  # garanti par la mise en forme des données
+            self.assertIn("## Partie élève", ex.OUTPUTS[nom])
+            self.assertIn("## Partie professeur", ex.OUTPUTS[nom])
 
     def test_numerotation_documents_partagee(self):
-        self.assertIn("## Documents nécessaires", cw.PROMPT_CONCEPTION)
+        self.assertIn("Documents nécessaires", cw.PROMPT_CONCEPTION)
         self.assertIn("Documents nécessaires", cw.PROMPT_DOCUMENTS)
-        self.assertIn("Total", cw.PROMPT_CONCEPTION)
+        self.assertIn("totalisent exactement", cw.PROMPT_CONCEPTION)
+
+    def test_vocabulaire_francais_et_sujets_sensibles(self):
+        for mot in ("trace écrite", "problématique", "laïcité", "neutralité", "<demande_du_professeur>",
+                    "exit ticket"):
+            self.assertIn(mot, cw.CONTEXTE_COMMUN)
+        self.assertIn("N'emploie aucun calque de l'anglais", cw.CONTEXTE_COMMUN)
 
     def test_relecteur_connait_ses_cles(self):
         for key in list(cw.VERIFICATIONS) + list(cw.CRITERES):
@@ -280,7 +340,7 @@ class CorrectionsMultiplesTests(RouteurReset):
             {"agent": 5, "consignes": ["CONSIGNE-DOCS"]}, {"agent": 3, "consignes": ["CONSIGNE-DEROULE"]}]})
         _, ok = cw.apply_correction(client, out, rapport)
         self.assertTrue(ok)
-        rerun = [c for c in client.calls if c[0] in ("chat", "web")]
+        rerun = [c for c in client.calls if c[0] in ("chat", "web") and c[1] in PROMPTS_PRINCIPAUX]
         self.assertEqual([c[1] for c in rerun],
                          [cw.PROMPT_CONCEPTION, cw.PROMPT_REDACTION, cw.PROMPT_DOCUMENTS, cw.PROMPT_EVALUATION])
         self.assertIn("CONSIGNE-DEROULE", rerun[0][2])
@@ -354,7 +414,8 @@ class DocxTests(RouteurReset):
 def texts_of(path):
     doc = Document(path)
     cells = [c.text for t in doc.tables for row in t.rows for c in row.cells]
-    return "\n".join([p.text for p in doc.paragraphs] + cells), doc
+    texte = "\n".join([p.text for p in doc.paragraphs] + cells)
+    return texte.replace("\u00a0", " ").replace("\u202f", " "), doc
 
 
 class DecoupageTests(RouteurReset):
@@ -472,7 +533,7 @@ class RenduEleveTests(RouteurReset):
         encadres = [t.cell(0, 0).paragraphs[0].text for t in docs.tables if len(t.columns) == 1]
         self.assertEqual(encadres[:3], ["Doc 1 — Le voyage d'un conteneur",
                                         "Doc 2 — Les grandes routes maritimes mondiales",
-                                        "Doc 3 — Le trafic des principaux ports européens"])
+                                        "Doc 3 — Le trafic de grands ports"])
         self.assertTrue(any(t.rows[0].height is not None for t in docs.tables))  # cadre pour la carte
         self.assertIn("Ce que je retiens", [t.cell(0, 0).paragraphs[0].text for t in cours.tables])
 

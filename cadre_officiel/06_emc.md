@@ -1,5 +1,6 @@
 ---
 agents: REFERENTIEL, CADRAGE, DEROULE, DOCUMENTS, EVALUATION, RELECTEUR
+disciplines: EMC
 statut: vérifié
 sources: programme d'enseignement moral et civique, arrêté du 29 mai 2024 (BO n° 24 du 13 juin 2024), préambule et parties lycée / CAP
 ---
