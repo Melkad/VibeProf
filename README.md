@@ -53,6 +53,18 @@ Les sources trouvées par la recherche web sont listées à la fin des productio
 - référentiel : seules les sources des domaines officiels sont retenues, les autres sont signalées comme écartées ;
 - documents élèves : toutes les sources consultées sont listées, et les URL citées sans provenir de la recherche sont signalées « à vérifier ».
 
+## Cadre officiel
+
+Pour coller au plus près des textes officiels, les agents reçoivent dans leurs consignes les fiches du dossier [`cadre_officiel/`](cadre_officiel/README.md) : sources officielles à consulter en priorité, organisation des programmes, capacités, épreuves d'examen, recommandations de mise en œuvre. Chaque fiche indique son statut (`vérifié`, `partiel`, `à compléter`) et ses sources ; on les complète en recopiant les textes officiels, sans toucher au code.
+
+Les agents doivent aussi :
+- vérifier que le programme cité est **celui en vigueur** (date du texte) ;
+- relever les **recommandations de mise en œuvre** de la ressource d'accompagnement Eduscol du thème, et les **attendus de l'examen** ;
+- rattacher objectifs et questions d'évaluation aux **capacités** avec leurs intitulés exacts ;
+- produire un tableau **« Conformité aux recommandations officielles »** (recommandation, source, application dans la séance), repris dans la fiche professeur.
+
+Le relecteur contrôle en plus que le programme en vigueur a été vérifié et que les recommandations sont appliquées.
+
 ## Modèles
 
 | Niveau | Défaut | Rôle | Surcharge |

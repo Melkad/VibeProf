@@ -104,16 +104,19 @@ Tu es l'agent 1, agent de recherche documentaire. Ta mission : retrouver le prog
 Règles strictes :
 - Utilise la recherche web. Ne retiens QUE les contenus issus des sites officiels : eduscol.education.fr, eduscol.education.gouv.fr et education.gouv.fr (sous-domaines inclus).
 - Identifie la classe (CAP, seconde, première ou terminale bac pro), la discipline (histoire, géographie ou EMC) et le thème du programme qui correspond à la demande.
+- Vérifie que le programme cité est bien celui en vigueur pour cette classe à la date d'aujourd'hui : un programme plus récent publié au Bulletin officiel peut avoir remplacé celui de 2019-2020. Indique la date du texte.
 - Recopie mot pour mot les notions et mots-clés, les capacités et les repères du thème : ne reformule pas, les agents suivants s'appuieront sur ces formulations exactes.
+- Cherche la ressource d'accompagnement Eduscol du thème et relève ses recommandations de mise en œuvre (démarches, types de documents, points de vigilance) : la séance devra les appliquer.
+- Relève ce que l'épreuve de l'examen préparé (CAP ou bac pro) évalue dans cette discipline.
 - Si le thème demandé ne correspond pas exactement à un intitulé du programme, dis-le et indique le ou les thèmes officiels les plus proches.
 - Cite l'URL exacte de chaque information.
-- Ne recopie que ce qui concerne le thème de la séance, pas le reste du programme. Longueur maximale : 350 mots hors URL.
+- Ne recopie que ce qui concerne le thème de la séance, pas le reste du programme. Longueur maximale : 450 mots hors URL.
 - Si une information n'est pas trouvée sur un site officiel, écris « SOURCE OFFICIELLE NON TROUVÉE » à sa place.
 
 Entrée : la demande du prof (classe, spécialité, thème, durée, format).
 Sortie, avec exactement ces sections :
 ## Programme applicable
-Classe, discipline, texte officiel (Bulletin officiel : numéro et date), URL.
+Classe, discipline, texte officiel en vigueur (Bulletin officiel : numéro et date), URL. Indique comment tu as vérifié qu'il est toujours en vigueur.
 ## Thème du programme
 Intitulé exact, et écart éventuel avec la demande du prof.
 ## Notions et mots-clés
@@ -122,6 +125,10 @@ Intitulé exact, et écart éventuel avec la demande du prof.
 (Pour les repères, distingue ceux déjà vus au cycle 4 s'ils sont signalés dans le programme.)
 ## Commentaire du programme
 Résumé fidèle des orientations en 3 phrases au maximum, avec URL.
+## Recommandations officielles de mise en œuvre
+3 à 5 puces tirées de la ressource d'accompagnement Eduscol du thème (démarches, documents, points de vigilance), chacune avec son URL. Si aucune ressource n'existe : « SOURCE OFFICIELLE NON TROUVÉE ».
+## Attendus de l'examen
+2 ou 3 puces : ce que l'épreuve de l'examen préparé évalue dans cette discipline (types d'exercices, capacités), avec URL.
 ## Ressources d'accompagnement officielles
 Titre et URL de chaque ressource Eduscol utile.
 ## Points sans source officielle"""
@@ -143,7 +150,7 @@ Une seule ligne.
 ## Place dans la progression (proposition)
 Une seule phrase.
 ## Objectifs d'apprentissage
-2 à 4 objectifs formulés avec des verbes d'action concrets (« situer », « décrire », « expliquer »…), chacun relié à une capacité ou une notion du programme.
+2 à 4 objectifs formulés avec des verbes d'action concrets (« situer », « décrire », « expliquer »…), chacun relié à une capacité du programme citée avec son intitulé exact.
 ## Notions, capacités et repères travaillés
 Trois lignes au maximum (notions / capacités / repères), sans recopier le programme en entier.
 ## Prérequis
@@ -162,12 +169,13 @@ Tu es l'agent 3, concepteur du déroulé de séance.
 Règles :
 - Privilégie les méthodes actives adaptées au lycée pro : étude de documents, travail en binôme ou en groupe, mise en situation, supports visuels.
 - Prévois une accroche, des transitions explicites, des moments de synthèse orale et un temps de trace écrite.
+- Applique en priorité les « Recommandations officielles de mise en œuvre » de la fiche de l'agent 1 (démarches, types de documents, points de vigilance). Si tu t'en écartes, justifie-le.
 - Respecte le découpage horaire du cadrage : la somme des durées doit être exactement égale à la durée de la séance.
 - Tu décides des documents utilisés pendant la séance : numérote-les Doc 1, Doc 2… (4 au maximum). L'agent 5 les produira exactement d'après ta description, avec la même numérotation.
 - Consignes aux élèves : phrases courtes, un verbe d'action par consigne, 25 mots au maximum.
-- 7 étapes au maximum. Longueur maximale totale : 400 mots.
+- 7 étapes au maximum. Longueur maximale totale : 500 mots.
 
-Entrée : la demande du prof + la fiche « Cadrage ».
+Entrée : la demande du prof + la fiche « Référentiel officiel » + la fiche « Cadrage ».
 Sortie, avec exactement ces sections :
 ## Déroulé
 Tableau à 5 colonnes exactement : | Durée | Étape et objectif | Consigne aux élèves | Support | Rôle du prof |. Cellules courtes (le tableau est imprimé en portrait). Puis une ligne « **Total : X min** » qui doit être égale à la durée de la séance.
@@ -176,7 +184,9 @@ Une ligne par document : Doc N, nature (texte, carte, photographie, graphique, t
 ## Différenciation
 2 puces : une aide pour les élèves en difficulté (coup de pouce, document simplifié, consigne guidée), un prolongement pour les élèves plus rapides.
 ## Trace écrite
-Une phrase : moment et modalité (dictée, texte à trous, construction collective…)."""
+Une phrase : moment et modalité (dictée, texte à trous, construction collective…).
+## Conformité aux recommandations officielles
+Tableau | Recommandation officielle | Source | Application dans la séance |, une ligne par recommandation de la fiche de l'agent 1 (et par point du cadre officiel qui s'applique). Si une recommandation n'est pas appliquée, écris pourquoi dans la dernière colonne. Cellules de 15 mots au maximum."""
 
 PROMPT_REDACTION = CONTEXTE_COMMUN + """
 
@@ -239,11 +249,13 @@ Tu es l'agent 6, concepteur de l'évaluation.
 
 Règles :
 - Chaque objectif d'apprentissage du cadrage est évalué par au moins une question.
+- Chaque question est rattachée à une capacité du programme, citée avec son intitulé exact.
+- La question de réflexion reprend un type d'exercice décrit dans les « Attendus de l'examen » de la fiche de l'agent 1, adapté au niveau de la séance.
 - Les questions portent uniquement sur ce qui a été vu dans le support de cours.
 - Formulations courtes et sans piège ; pour les QCM, 3 propositions plausibles, en sous-liste sous la question.
 - Longueur : la partie élève doit tenir sur une page imprimée, lignes de réponse comprises ; la partie professeur sur une demi-page.
 
-Entrée : le cadrage et le support de cours.
+Entrée : la fiche « Référentiel officiel », le cadrage et le support de cours.
 Sortie, avec exactement ces deux parties :
 ## Partie élève
 ### Quiz
@@ -255,7 +267,7 @@ Tableau | Capacité | Non acquis | En cours | Acquis | Expert |, 2 capacités au
 ## Partie professeur
 ### Corrigé
 ### Correspondance questions / objectifs
-Tableau | Question | Objectif évalué |.
+Tableau | Question | Objectif évalué | Capacité du programme |.
 ### Critères de réussite"""
 
 PROMPT_RELECTEUR = CONTEXTE_COMMUN + """
@@ -276,10 +288,12 @@ Commence par ces vérifications factuelles (vrai / faux) :
 - objectifs_tous_evalues : chaque objectif du cadrage est évalué par au moins une question.
 - programme_repris : les notions, capacités et repères du cadrage figurent bien dans la fiche de l'agent 1, qui cite une source officielle.
 - parties_separees : documents élèves et évaluation séparent « Partie élève » et « Partie professeur ».
+- programme_en_vigueur : la fiche de l'agent 1 identifie le programme en vigueur (texte, date, URL officielle) et explique comment elle l'a vérifié.
+- recommandations_appliquees : le déroulé contient le tableau « Conformité aux recommandations officielles », cohérent avec la fiche de l'agent 1 et avec ce que la séance fait réellement.
 Une vérification fausse plafonne à 3 la note du critère concerné.
 
 Grille (note entière de 1 à 5 par critère ; 2 et 4 sont des niveaux intermédiaires) :
-1. c1_ancrage_programme — 5 : programme identifié avec URL officielle, notions/capacités/repères repris dans le cadrage et le cours. 3 : programme identifié mais reprise partielle ou sources incomplètes. 1 : aucune source officielle ou thème hors programme.
+1. c1_ancrage_programme — 5 : programme en vigueur identifié avec URL officielle, notions/capacités/repères repris avec leurs intitulés exacts, recommandations officielles de mise en œuvre appliquées, évaluation alignée sur les capacités et les attendus de l'examen. 3 : programme identifié mais reprise partielle, recommandations peu appliquées ou sources incomplètes. 1 : aucune source officielle, programme périmé ou thème hors programme.
 2. c2_deroule — 5 : total exact, durées réalistes, consignes exactes et actives. 3 : petit écart de durée ou consignes floues. 1 : total faux ou séance irréalisable.
 3. c3_niveau_langage — 5 : phrases courtes, vocabulaire expliqué, exemples concrets, longueurs maximales respectées. 3 : quelques passages trop abstraits ou trop longs. 1 : niveau inadapté au lycée professionnel ou documents beaucoup trop longs.
 4. c4_coherence — 5 : chaque objectif est travaillé, documenté et évalué ; documents identiques d'un agent à l'autre. 3 : un décalage. 1 : plusieurs décalages.
@@ -293,12 +307,69 @@ Règles :
 Entrée : la demande du prof et l'ensemble du dossier.
 Sortie : UNIQUEMENT un objet JSON valide, sans texte avant ni après, de la forme :
 {
-  "verifications": {"duree_totale_respectee": true, "documents_coherents": false, "objectifs_tous_evalues": true, "programme_repris": true, "parties_separees": true},
+  "verifications": {"duree_totale_respectee": true, "documents_coherents": false, "objectifs_tous_evalues": true, "programme_repris": true, "parties_separees": true, "programme_en_vigueur": true, "recommandations_appliquees": true},
   "notes": {"c1_ancrage_programme": 4, "c2_deroule": 3, "c3_niveau_langage": 4, "c4_coherence": 3, "c5_exactitude": 4},
   "score_global": 3.6,
   "livraison": "non",
   "corrections": [{"agent": 3, "consignes": ["..."]}, {"agent": 5, "consignes": ["..."]}]
 }"""
+
+
+# --------------------------------------------------------------------------- cadre officiel
+
+CADRE_OFFICIEL_DIR = Path(__file__).resolve().parent / "cadre_officiel"
+
+
+def lire_cadre_officiel(dossier=CADRE_OFFICIEL_DIR):
+    """Fiches du dossier cadre_officiel/ : [{fichier, agents, statut, sources, corps}].
+
+    Format : en-tête « --- » (agents, statut, sources) puis texte markdown ; les commentaires <!-- … --> ne sont
+    pas transmis aux agents."""
+    fiches = []
+    for chemin in sorted(Path(dossier).glob("[0-9]*.md")) if Path(dossier).is_dir() else []:
+        texte = chemin.read_text(encoding="utf-8")
+        entete, corps = {}, texte
+        m = re.match(r"^---\s*\n(.*?)\n---\s*\n(.*)$", texte, re.DOTALL)
+        if m:
+            for ligne in m.group(1).splitlines():
+                if ":" in ligne:
+                    cle, valeur = ligne.split(":", 1)
+                    entete[cle.strip().lower()] = valeur.strip()
+            corps = m.group(2)
+        corps = re.sub(r"<!--.*?-->", "", corps, flags=re.DOTALL).strip()
+        fiches.append({
+            "fichier": chemin.name,
+            "agents": {a.strip().upper() for a in entete.get("agents", "").split(",") if a.strip()},
+            "statut": entete.get("statut", "à compléter"),
+            "sources": entete.get("sources", ""),
+            "corps": corps,
+        })
+    return fiches
+
+
+CADRE_OFFICIEL = lire_cadre_officiel()
+
+
+def cadre_officiel(cle, fiches=None):
+    """Bloc de consignes « cadre officiel » destiné à l'agent `cle` (vide si aucune fiche ne le concerne)."""
+    blocs = []
+    for f in CADRE_OFFICIEL if fiches is None else fiches:
+        if cle.upper() in f["agents"] and f["corps"]:
+            blocs.append(f"[Fiche {f['fichier']} — statut : {f['statut']} — sources : {f['sources']}]\n{f['corps']}")
+    if not blocs:
+        return ""
+    return ("\n\nCADRE OFFICIEL DE RÉFÉRENCE — extraits de textes officiels rassemblés pour VibeProf (statut et sources "
+            "indiqués pour chaque fiche). Ils priment sur tes connaissances générales. Une fiche « partiel » ou « à compléter » est incomplète : complète-la par "
+            "ta recherche ou tes entrées, sans jamais la contredire.\n\n" + "\n\n".join(blocs))
+
+
+PROMPT_SOURCES += cadre_officiel("REFERENTIEL")
+PROMPT_CADRAGE += cadre_officiel("CADRAGE")
+PROMPT_CONCEPTION += cadre_officiel("DEROULE")
+PROMPT_REDACTION += cadre_officiel("SUPPORT")
+PROMPT_DOCUMENTS += cadre_officiel("DOCUMENTS")
+PROMPT_EVALUATION += cadre_officiel("EVALUATION")
+PROMPT_RELECTEUR += cadre_officiel("RELECTEUR")
 
 
 # Chaque agent déclare :
@@ -314,7 +385,7 @@ AGENTS = [
      "inputs": ["demande", "1_referentiel_officiel"], "web": False,
      "key": "CADRAGE", "tier": "principal", "temperature": 0.2},
     {"name": "3_deroule", "title": "Déroulé de séance", "prompt": PROMPT_CONCEPTION,
-     "inputs": ["demande", "2_cadrage"], "web": False,
+     "inputs": ["demande", "1_referentiel_officiel", "2_cadrage"], "web": False,
      "key": "DEROULE", "tier": "principal", "temperature": 0.5},
     {"name": "4_support_cours", "title": "Support de cours", "prompt": PROMPT_REDACTION,
      "inputs": ["2_cadrage", "3_deroule"], "web": False,
@@ -323,7 +394,7 @@ AGENTS = [
      "inputs": ["2_cadrage", "3_deroule", "4_support_cours"], "web": True, "sources_officielles": False,
      "key": "DOCUMENTS", "tier": "principal", "temperature": 0.5},
     {"name": "6_evaluation", "title": "Évaluation", "prompt": PROMPT_EVALUATION,
-     "inputs": ["2_cadrage", "4_support_cours"], "web": False,
+     "inputs": ["1_referentiel_officiel", "2_cadrage", "4_support_cours"], "web": False,
      "key": "EVALUATION", "tier": "leger", "temperature": 0.3},
 ]
 # Le relecteur tourne sur un modèle différent des rédacteurs (limite l'auto-complaisance), en mode raisonnement.
@@ -336,6 +407,8 @@ VERIFICATIONS = {
     "objectifs_tous_evalues": "Tous les objectifs sont évalués",
     "programme_repris": "Programme officiel repris",
     "parties_separees": "Parties élève / professeur séparées",
+    "programme_en_vigueur": "Programme en vigueur vérifié",
+    "recommandations_appliquees": "Recommandations officielles appliquées",
 }
 TITRES = {"demande": "Demande du prof", **{a["name"]: a["title"] for a in AGENTS}}
 CRITERES = {
@@ -1232,9 +1305,14 @@ def _add_controle_qualite(doc, rendu, rapports, complet):
     for modele, agents in _modeles_lignes().items():
         p = doc.add_paragraph(f"Modèle {modele} : {', '.join(agents)}.")
         p.runs[0].font.size, p.runs[0].font.color.rgb = Pt(9), GRIS
+    if CADRE_OFFICIEL:
+        statuts = ", ".join(f"{f['fichier'].split('_', 1)[0]} {f['statut']}" for f in CADRE_OFFICIEL)
+        p = doc.add_paragraph(f"Cadre officiel fourni aux agents : {len(CADRE_OFFICIEL)} fiches ({statuts}).")
+        p.runs[0].font.size, p.runs[0].font.color.rgb = Pt(9), GRIS
 
 
-ANNEXE_PROGRAMME = ("programme applicable", "thème du programme", "points sans source", "sources officielles")
+ANNEXE_PROGRAMME = ("programme applicable", "thème du programme", "recommandations officielles", "attendus de l",
+                    "points sans source", "sources officielles")
 
 
 def build_docx(path, demande, outputs, rapports, livre):
@@ -1391,6 +1469,7 @@ def generer_cours(client, demande, outdir, max_relectures=MAX_RELECTURES, avance
             "modeles_configures": dict(MODELES),
             "modeles_utilises": dict(ROUTEUR.utilises),
             "substitutions": dict(ROUTEUR.substitutions),
+            "cadre_officiel": [{"fichier": f["fichier"], "statut": f["statut"]} for f in CADRE_OFFICIEL],
             "statut": statut,
             "livre": livre,
             "dossier": outputs,

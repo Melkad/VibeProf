@@ -81,6 +81,12 @@ def barre_laterale():
             relectures = st.slider("Nombre maximal de relectures", 1, 5, cw.MAX_RELECTURES,
                                    help="Chaque relecture peut faire corriger le cours, ce qui allonge la génération.")
 
+        with st.expander("Cadre officiel"):
+            st.caption("Extraits de textes officiels transmis aux agents (dossier `cadre_officiel/`).")
+            for f in cw.CADRE_OFFICIEL:
+                icone = {"vérifié": "🟢", "partiel": "🟡"}.get(f["statut"], "⚪")
+                st.markdown(f"{icone} `{f['fichier']}` — {f['statut']}")
+
         st.divider()
         st.subheader("Rouvrir un cours")
         fichier = st.file_uploader("Fichier cours_final.json d'une génération précédente", type="json",

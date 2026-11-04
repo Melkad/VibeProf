@@ -6,6 +6,7 @@ OUTPUTS = {
     "demande": DEMANDE,
     "1_referentiel_officiel": """## Programme applicable
 Classe de terminale professionnelle, géographie. Programme d'histoire-géographie et EMC de la voie professionnelle (BO spécial n° 1 du 6 février 2020). URL : https://eduscol.education.fr/document/25906/download
+Vérification : aucun programme plus récent pour cette classe sur la page Eduscol de la voie professionnelle.
 
 ## Thème du programme
 **Thème 1 : La France et l'Union européenne dans la mondialisation.** Le thème demandé correspond exactement à un intitulé du programme.
@@ -29,6 +30,15 @@ Classe de terminale professionnelle, géographie. Programme d'histoire-géograph
 
 ## Commentaire du programme
 Le thème permet de comprendre comment la France et l'Union européenne s'insèrent dans la mondialisation, à travers leurs atouts (ports, métropoles, entreprises) et leurs fragilités. URL : https://eduscol.education.fr/document/25906/download
+
+## Recommandations officielles de mise en œuvre
+- Partir d'une étude de cas concrète (un produit, un port) avant de généraliser. URL : https://eduscol.education.fr/document/25924/download
+- Faire réaliser une production graphique (croquis, schéma). URL : https://eduscol.education.fr/document/25924/download
+- Relier le thème à l'expérience des élèves et à leur futur métier. URL : https://eduscol.education.fr/document/25924/download
+
+## Attendus de l'examen
+- Mobiliser des repères et des notions pour répondre à une question sur un document.
+- Réaliser une courte production écrite ou graphique. URL : https://www.education.gouv.fr/bo/20/Special7/MENE2019454N.htm
 
 ## Ressources d'accompagnement officielles
 - Ressources pour la classe de terminale professionnelle — géographie : https://eduscol.education.fr/document/25924/download
@@ -97,7 +107,14 @@ Première séance du thème, en début d'année, avant l'étude des métropoles.
 - Élèves rapides : rechercher le port le plus proche du lycée et sa spécialité.
 
 ## Trace écrite
-Texte à trous complété collectivement en fin de séance.""",
+Texte à trous complété collectivement en fin de séance.
+
+## Conformité aux recommandations officielles
+| Recommandation officielle | Source | Application dans la séance |
+|---|---|---|
+| Partir d'une étude de cas concrète | Ressource Eduscol terminale | Trajet d'un téléviseur (Doc 1) avant les ports européens |
+| Production graphique | Ressource Eduscol terminale | Croquis des ports et de la façade (20 min) |
+| Lien avec le métier | Ressource Eduscol terminale | Exercice du vendeur, accroche sur les étiquettes |""",
     "4_support_cours": """# La France et l'Union européenne dans la mondialisation
 
 ## Ce que je retiens
@@ -209,11 +226,11 @@ En quelques lignes, expliquez pourquoi les ports sont indispensables dans la mon
 1. b — 2. c — 3. Par bateau, dans des conteneurs. — 4. Un lieu de contact entre deux espaces. — 5. Le Havre, Marseille.
 
 ### Correspondance questions / objectifs
-| Question | Objectif évalué |
-|---|---|
-| 1, 3 | Décrire un flux |
-| 2, 5 | Situer les ports |
-| 4, réflexion | Expliquer le rôle d'interface |
+| Question | Objectif évalué | Capacité du programme |
+|---|---|---|
+| 1, 3 | Décrire un flux | Situer et caractériser les principaux flux |
+| 2, 5 | Situer les ports | Maîtriser et utiliser des repères chronologiques et spatiaux |
+| 4, réflexion | Expliquer le rôle d'interface | Mettre un document en relation avec ses connaissances |
 
 ### Critères de réussite
 - Vocabulaire utilisé correctement.
