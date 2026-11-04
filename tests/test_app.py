@@ -67,6 +67,7 @@ class AppTests(unittest.TestCase):
                                                    "cours_complet.docx"])
         self.assertEqual(len(at.get("download_button")), 6)  # zip + 5 documents
         self.assertTrue(json.loads(res["json"])["livre"])
+        self.assertIn('"relecteur" -> "3_deroule" [style=dashed', res["graphe"])  # parcours du workflow
 
     def test_echec_affiche_une_erreur(self):
         client = FakeClient()

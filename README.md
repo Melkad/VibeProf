@@ -4,7 +4,7 @@ Workflow agentique (API Mistral) qui génère une séance d'histoire-géographie
 
 ## Interface web (sans environnement de développement)
 
-VibeProf s'utilise depuis le navigateur : on remplit un formulaire (classe, spécialité, discipline, thème, durée, format), on suit la progression, puis on télécharge les documents Word (un par un ou en `.zip`) et on les prévisualise.
+VibeProf s'utilise depuis le navigateur : on remplit un formulaire (classe, spécialité, discipline, thème, durée, format), on suit la progression sur un **graphe du workflow** mis à jour en direct (agent en cours, terminé avec sa durée, renvois du relecteur en pointillés), puis on télécharge les documents Word (un par un ou en `.zip`) et on les prévisualise.
 
 Il faut une **clé API Mistral** (à créer sur [console.mistral.ai](https://console.mistral.ai)) : elle se saisit dans la barre latérale et n'est jamais enregistrée.
 

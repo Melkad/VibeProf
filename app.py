@@ -15,6 +15,7 @@ from pathlib import Path
 import streamlit as st
 
 import course_workflow as cw
+from suivi_workflow import SuiviWorkflow
 
 st.set_page_config(page_title="VibeProf", page_icon="📚", layout="centered")
 
@@ -101,7 +102,7 @@ def construire_demande(classe, specialite, discipline, theme, duree, format_, pr
     return demande
 
 
-def memoriser(demande, dossier_sortie, fichiers, livre, rapports, dossier):
+def memoriser(demande, dossier_sortie, fichiers, livre, rapports, dossier, graphe=None):
     """Garde en session le contenu des fichiers (le dossier temporaire peut ensuite disparaître)."""
     st.session_state["resultat"] = {
         "demande": demande,
@@ -112,6 +113,7 @@ def memoriser(demande, dossier_sortie, fichiers, livre, rapports, dossier):
         "rapports": rapports,
         "dossier": dossier,
         "date": datetime.now().strftime("%Y%m%d_%H%M"),
+        "graphe": graphe,
     }
 
 
@@ -119,21 +121,29 @@ def generer(cle, modeles, relectures, demande):
     statut = st.status("Génération du cours en cours… (plusieurs minutes, ne fermez pas la page)", expanded=True)
     with statut:
         barre = st.progress(0.0, text="Préparation")
+        zone_graphe = st.empty()
+        legende()
         zone_journal = st.empty()
     lignes = []
 
     def journal(message):
         lignes.append(message)
-        zone_journal.code("\n".join(lignes[-12:]), language=None)
+        zone_journal.code("\n".join(lignes[-6:]), language=None)
 
     def avancement(fraction, libelle):
         barre.progress(fraction, text=libelle)
 
-    cw.configurer_session(modeles, journal=journal)
+    def dessiner(suivi_):
+        zone_graphe.graphviz_chart(suivi_.to_dot(), use_container_width=True)
+
+    suivi = SuiviWorkflow(on_change=dessiner)
+    dessiner(suivi)
+    cw.configurer_session(modeles, journal=journal, evenements=suivi.recevoir)
     with tempfile.TemporaryDirectory(prefix="vibeprof_") as tmp:
         try:
             res = cw.generer_cours(cw.make_client(cle), demande, Path(tmp), relectures, avancement=avancement)
         except cw.GenerationError as exc:
+            suivi.marquer_erreur(str(exc))
             statut.update(label="La génération a échoué", state="error", expanded=True)
             st.error(f"{exc}\n\nVérifiez votre clé API et réessayez. Si le problème persiste, il peut venir du "
                      "nom d'un modèle (réglages avancés).")
@@ -144,7 +154,7 @@ def generer(cle, modeles, relectures, demande):
             return
         finally:
             cw.configurer_session()  # ne pas garder le journal de l'interface dans ce fil
-        memoriser(demande, tmp, res["fichiers"], res["livre"], res["rapports"], res["dossier"])
+        memoriser(demande, tmp, res["fichiers"], res["livre"], res["rapports"], res["dossier"], suivi.to_dot())
     statut.update(label="Cours généré", state="complete", expanded=False)
 
 
@@ -173,6 +183,11 @@ def reduire_titres(markdown, decalage=3):
                   markdown or "", flags=re.MULTILINE)
 
 
+def legende():
+    st.caption("⬜ en attente · 🟦 en cours · 🟨 correction demandée par le relecteur · 🟩 terminé · 🟥 erreur "
+               "— flèches pointillées : renvois du relecteur")
+
+
 def archive_zip(res):
     tampon = io.BytesIO()
     with zipfile.ZipFile(tampon, "w", zipfile.ZIP_DEFLATED) as z:
@@ -197,6 +212,11 @@ def afficher_resultat(res):
         else:
             st.warning(f"Contrôle qualité : {score}/5, sous le seuil de {cw.SEUIL_LIVRAISON}/5. "
                        "Relisez attentivement le cours avant de l'utiliser (détails dans la fiche professeur).")
+
+    if res.get("graphe"):
+        with st.expander("Parcours du workflow"):
+            st.graphviz_chart(res["graphe"], use_container_width=True)
+            legende()
 
     st.markdown("#### Télécharger")
     st.download_button("📦 Tout télécharger (.zip)", archive_zip(res), f"vibeprof_{res['date']}.zip",

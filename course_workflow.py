@@ -68,10 +68,23 @@ def log(message):
     (getattr(_LOCAL, "log", None) or print)(message)
 
 
-def configurer_session(modeles=None, journal=None):
-    """Prépare le fil courant : modèles (valeurs par défaut complétées), suivi des modèles remis à zéro, journal."""
+def evenement(etape, etat, **infos):
+    """Signale l'état d'une étape (graphe d'avancement de l'interface web).
+
+    etape : nom d'un agent (« 2_cadrage »…), « relecteur » ou « documents ».
+    etat : « en_cours », « correction », « termine » ou « erreur ».
+    """
+    rappel = getattr(_LOCAL, "evenements", None)
+    if rappel:
+        rappel(etape, etat, infos)
+
+
+def configurer_session(modeles=None, journal=None, evenements=None):
+    """Prépare le fil courant : modèles (valeurs par défaut complétées), suivi des modèles remis à zéro, journal
+    et rappel d'événements (voir `evenement`)."""
     _LOCAL.modeles = {**MODELES_DEFAUT, **{k: v for k, v in (modeles or {}).items() if v}}
     _LOCAL.log = journal
+    _LOCAL.evenements = evenements
     ROUTEUR.reset()
 SEUIL_LIVRAISON = 4.0
 DOMAINES_OFFICIELS = ("eduscol.education.fr", "education.gouv.fr")
@@ -574,10 +587,18 @@ def call_web_agent(client, cfg, user_content):
 
 
 def run_agent(client, agent, outputs, corrections=None):
+    evenement(agent["name"], "correction" if corrections else "en_cours")
     user_content = build_input(outputs, agent, corrections)
-    if agent["web"]:
-        return call_web_agent(client, agent, user_content)
-    return call_agent(client, agent, user_content)
+    try:
+        if agent["web"]:
+            texte = call_web_agent(client, agent, user_content)
+        else:
+            texte = call_agent(client, agent, user_content)
+    except Exception as exc:
+        evenement(agent["name"], "erreur", message=str(exc))
+        raise
+    evenement(agent["name"], "termine", modele=ROUTEUR.utilises.get(agent["name"]))
+    return texte
 
 
 def dependents(name):
@@ -1396,14 +1417,18 @@ def generer_cours(client, demande, outdir, max_relectures=MAX_RELECTURES, avance
     for iteration in range(1, max_relectures + 1):
         avancer(0.7 + 0.3 * (iteration - 1) / max_relectures, f"Relecture {iteration}/{max_relectures}")
         log(f"[relecture {iteration}/{max_relectures}] Évaluation par le relecteur...")
+        evenement("relecteur", "en_cours", iteration=iteration, max_relectures=max_relectures)
         try:
             rapport, _ = run_relecture(client, outputs)
         except Exception as exc:
+            evenement("relecteur", "erreur", message=str(exc))
             log(f"  relecture impossible : {exc}")
             statut = "relecture_en_erreur"
             break
         rapports.append(rapport)
         save(outputs)
+        evenement("relecteur", "termine", iteration=iteration, score=rapport["score_global"],
+                  livre=rapport["livraison"] == "oui", corrections=[c["agent"] for c in rapport["corrections"]])
         log(f"  score = {rapport['score_global']}/5, livraison = {rapport['livraison']}")
         if rapport["livraison"] == "oui":
             livre = True
@@ -1424,7 +1449,9 @@ def generer_cours(client, demande, outdir, max_relectures=MAX_RELECTURES, avance
 
     save(outputs, statut=statut, livre=livre)
     avancer(0.98, "Mise en page des documents")
+    evenement("documents", "en_cours")
     fichiers = build_deliverables(outdir, demande, outputs, rapports, livre)
+    evenement("documents", "termine", fichiers=[f.name for f in fichiers])
     if not livre:
         log(f"⚠ Seuil de {SEUIL_LIVRAISON}/5 non atteint : cours à relire attentivement.")
     avancer(1.0, "Terminé")
