@@ -64,9 +64,16 @@ class FakeClient:
         if reasoning and model in self.no_reasoning_models:
             raise api_error(422, '{"message": "reasoning_effort is not supported"}')
 
-    def _complete(self, model, messages, temperature, response_format=None, reasoning_effort=None):
+    @staticmethod
+    def _check_sampling(temperature, top_p):
+        # Règle de l'API Mistral : à température 0 (échantillonnage glouton), top_p doit valoir 1 (erreur 3054).
+        if temperature == 0 and top_p != 1:
+            raise api_error(400, '{"message": "top_p must be 1 when using greedy sampling.", "code": "3054"}')
+
+    def _complete(self, model, messages, temperature, response_format=None, reasoning_effort=None, top_p=None):
         system, user = messages[0]["content"], messages[1]["content"]
         assert isinstance(user, str)
+        self._check_sampling(temperature, top_p)
         self._check_model(model, reasoning_effort)
         self.models.append((system, model, reasoning_effort, temperature))
         self.calls.append(("chat", system, user))
@@ -80,6 +87,7 @@ class FakeClient:
         return self._reply(json.dumps(self.structures[agent["name"]], ensure_ascii=False))
 
     def _create_agent(self, model, name, instructions, tools, completion_args):
+        self._check_sampling(completion_args["temperature"], completion_args.get("top_p"))
         self._check_model(model, completion_args.get("reasoning_effort"))
         self.models.append((instructions, model, completion_args.get("reasoning_effort"),
                             completion_args["temperature"]))
@@ -153,6 +161,16 @@ class PipelineTests(RouteurReset):
         self.assertEqual(out["_contexte"], {"classe": "seconde", "discipline": "géographie", "duree_min": 110})
         for a in cw.AGENTS:
             self.assertIsInstance(out[a["name"]], str)
+
+    def test_greedy_sampling_sets_top_p(self):
+        """Erreur Mistral 3054 : à température 0, top_p doit valoir 1 (structuration et relecteur)."""
+        self.assertEqual(cw.echantillonnage(0), {"temperature": 0, "top_p": 1})
+        self.assertEqual(cw.echantillonnage(0.4), {"temperature": 0.4})
+        client = FakeClient(rapports=[RAPPORT_OK])
+        out = cw.run_pipeline(client, ex.DEMANDE)  # échouerait sans top_p=1 (règle simulée par FakeClient)
+        cw.run_relecture(client, out)
+        structuration = [m for m in client.models if m[0] == cw.PROMPT_STRUCTURATION_SOURCES]
+        self.assertEqual(structuration[0][3], 0)
 
     def test_structured_outputs(self):
         client = FakeClient()

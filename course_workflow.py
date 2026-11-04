@@ -597,6 +597,15 @@ def call_with_fallback(cfg, request):
         return result
 
 
+def echantillonnage(temperature):
+    """Paramètres d'échantillonnage. À température 0 (échantillonnage « glouton »), l'API Mistral exige top_p = 1
+    (erreur 3054 sinon), alors que certains modèles ont une autre valeur par défaut."""
+    params = {"temperature": temperature}
+    if temperature == 0:
+        params["top_p"] = 1
+    return params
+
+
 def call_agent(client, cfg, user_content, response_format=None):
     if not isinstance(user_content, str):
         user_content = content_to_text(user_content)
@@ -606,7 +615,7 @@ def call_agent(client, cfg, user_content, response_format=None):
     ]
 
     def request(model, reasoning):
-        kwargs = {"model": model, "messages": messages, "temperature": cfg["temperature"]}
+        kwargs = {"model": model, "messages": messages, **echantillonnage(cfg["temperature"])}
         if response_format:
             kwargs["response_format"] = response_format
         if reasoning:
@@ -648,7 +657,7 @@ def call_structured(client, cfg, user_content, schema, system=None, temperature=
     for _ in range(2):
         def request(model, reasoning, messages=list(messages)):
             kwargs = {"model": model, "messages": messages, "response_format": format_reponse,
-                      "temperature": cfg["temperature"] if temperature is None else temperature}
+                      **echantillonnage(cfg["temperature"] if temperature is None else temperature)}
             if reasoning:
                 kwargs["reasoning_effort"] = reasoning
             return client.chat.complete(**kwargs)
@@ -731,7 +740,7 @@ def format_sources(texte, refs, officielles_seulement=True):
 
 def call_web_agent(client, cfg, user_content):
     def request(model, reasoning):
-        completion_args = {"temperature": cfg["temperature"]}
+        completion_args = echantillonnage(cfg["temperature"])
         if reasoning:
             completion_args["reasoning_effort"] = reasoning
         agent = client.beta.agents.create(
