@@ -2,6 +2,37 @@
 
 Workflow agentique (API Mistral) qui génère une séance d'histoire-géographie pour le lycée professionnel, ancrée dans les programmes officiels, et l'exporte en `.docx`.
 
+## Interface web (sans environnement de développement)
+
+VibeProf s'utilise depuis le navigateur : on remplit un formulaire (classe, spécialité, discipline, thème, durée, format), on suit la progression, puis on télécharge les documents Word (un par un ou en `.zip`) et on les prévisualise.
+
+Il faut une **clé API Mistral** (à créer sur [console.mistral.ai](https://console.mistral.ai)) : elle se saisit dans la barre latérale et n'est jamais enregistrée.
+
+### Sur son ordinateur
+
+1. Installer [Python](https://www.python.org/downloads/) (sous Windows, cocher « Add python.exe to PATH »).
+2. Télécharger le projet (bouton « Code » → « Download ZIP » sur GitHub) et le décompresser.
+3. Double-cliquer sur :
+   - **Windows** : `lancer_vibeprof.bat`
+   - **macOS** : `lancer_vibeprof.command` (la première fois : clic droit → Ouvrir)
+
+La première fois, l'installation prend quelques minutes ; ensuite l'interface s'ouvre directement dans le navigateur. Fermer la fenêtre noire arrête VibeProf.
+
+### En ligne, pour toute une équipe
+
+L'application peut être hébergée gratuitement sur [Streamlit Community Cloud](https://streamlit.io/cloud) : « New app » → choisir ce dépôt et le fichier `app.py`. Dans « Secrets », on peut définir :
+
+```toml
+MISTRAL_API_KEY = "..."         # facultatif : clé partagée, les utilisateurs n'ont plus à saisir la leur
+VIBEPROF_CODE_ACCES = "..."     # fortement conseillé avec une clé partagée : code demandé à l'ouverture
+```
+
+Sans `VIBEPROF_CODE_ACCES`, toute personne ayant le lien pourrait générer des cours aux frais de la clé partagée.
+
+### Rouvrir un cours
+
+Le `.zip` contient `cours_final.json`. Le déposer plus tard dans « Rouvrir un cours » (barre latérale) régénère les documents Word sans appeler l'API.
+
 ## Fonctionnement
 
 | # | Agent | Reçoit | Modèle | Temp. |
@@ -40,14 +71,16 @@ Pour vérifier les identifiants disponibles sur votre compte :
 python -c "from mistralai.client import Mistral; import os; [print(m.id) for m in Mistral(api_key=os.environ['MISTRAL_API_KEY']).models.list().data]"
 ```
 
-## Installation
+## Ligne de commande
 
 ```bash
 pip install -r requirements.txt
 export MISTRAL_API_KEY=...
 ```
 
-## Utilisation
+Interface web en local : `streamlit run app.py`.
+
+### Utilisation
 
 ```bash
 python course_workflow.py "Terminale bac pro Commerce, thème : la mondialisation, 2h, TD"
@@ -80,4 +113,4 @@ python course_workflow.py --rendu output/<horodatage>/cours_final.json
 python -m unittest discover -s tests
 ```
 
-Les tests utilisent un faux client Mistral : aucun appel réseau ni clé API requis.
+Les tests utilisent un faux client Mistral : aucun appel réseau ni clé API requis. `tests/test_app.py` teste l'interface Streamlit (formulaire, génération, erreurs, code d'accès) avec `streamlit.testing`.

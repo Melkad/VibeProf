@@ -3,6 +3,8 @@ import json
 import os
 import re
 import sys
+import threading
+from collections.abc import MutableMapping
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -22,12 +24,55 @@ from mistralai.client.utils import BackoffStrategy, RetryConfig
 #  - principal : rédaction et raisonnement pédagogique (qualité maximale)
 #  - leger     : tâches courtes et structurées, et relecture (modèle différent des rédacteurs)
 #  - secours   : modèle stable utilisé si un modèle est refusé par l'API (préversion retirée, id inconnu…)
-MODELES = {
+MODELES_DEFAUT = {
     "principal": os.environ.get("MISTRAL_MODEL", "mistral-large-4"),
     "leger": os.environ.get("MISTRAL_MODEL_LEGER", "mistral-small-2603"),
     "secours": os.environ.get("MISTRAL_MODEL_SECOURS", "mistral-large-2512"),
 }
 MAX_RELECTURES = 3
+
+# État propre à chaque fil d'exécution : l'interface web peut générer plusieurs cours en parallèle (un fil par
+# utilisateur), chacun avec ses modèles, son suivi des modèles utilisés et son journal.
+_LOCAL = threading.local()
+
+
+class _ModelesParFil(MutableMapping):
+    """Dictionnaire des modèles, initialisé depuis MODELES_DEFAUT et propre au fil courant."""
+
+    def _d(self):
+        if not hasattr(_LOCAL, "modeles"):
+            _LOCAL.modeles = dict(MODELES_DEFAUT)
+        return _LOCAL.modeles
+
+    def __getitem__(self, key):
+        return self._d()[key]
+
+    def __setitem__(self, key, value):
+        self._d()[key] = value
+
+    def __delitem__(self, key):
+        del self._d()[key]
+
+    def __iter__(self):
+        return iter(self._d())
+
+    def __len__(self):
+        return len(self._d())
+
+
+MODELES = _ModelesParFil()
+
+
+def log(message):
+    """Journal de progression : affiché dans la console, ou redirigé (interface web) via configurer_session."""
+    (getattr(_LOCAL, "log", None) or print)(message)
+
+
+def configurer_session(modeles=None, journal=None):
+    """Prépare le fil courant : modèles (valeurs par défaut complétées), suivi des modèles remis à zéro, journal."""
+    _LOCAL.modeles = {**MODELES_DEFAUT, **{k: v for k, v in (modeles or {}).items() if v}}
+    _LOCAL.log = journal
+    ROUTEUR.reset()
 SEUIL_LIVRAISON = 4.0
 DOMAINES_OFFICIELS = ("eduscol.education.fr", "education.gouv.fr")
 
@@ -362,7 +407,16 @@ class Routeur:
         self.utilises.clear()
 
 
-ROUTEUR = Routeur()
+class _RouteurParFil:
+    """Accès au Routeur du fil courant."""
+
+    def __getattr__(self, name):
+        if not hasattr(_LOCAL, "routeur"):
+            _LOCAL.routeur = Routeur()
+        return getattr(_LOCAL.routeur, name)
+
+
+ROUTEUR = _RouteurParFil()
 
 
 def model_for(cfg):
@@ -396,12 +450,12 @@ def call_with_fallback(cfg, request):
             result = request(model, reasoning)
         except MistralError as exc:
             if reasoning and _is_reasoning_error(exc):
-                print(f"  ({model} n'accepte pas reasoning_effort={reasoning} : nouvel essai sans raisonnement)")
+                log(f"  ({model} n'accepte pas reasoning_effort={reasoning} : nouvel essai sans raisonnement)")
                 reasoning = None
                 continue
             secours = MODELES["secours"]
             if _is_model_error(exc) and model != secours:
-                print(f"  (modèle {model} refusé par l'API [{exc.status_code}] : bascule sur {secours})")
+                log(f"  (modèle {model} refusé par l'API [{exc.status_code}] : bascule sur {secours})")
                 ROUTEUR.substitutions[model] = secours
                 model = secours
                 continue
@@ -512,7 +566,7 @@ def call_web_agent(client, cfg, user_content):
             try:
                 client.beta.agents.delete(agent_id=agent.id)
             except Exception as exc:  # le nettoyage ne doit pas faire échouer le cours
-                print(f"  (avertissement : suppression de l'agent {agent.id} impossible : {exc})")
+                log(f"  (avertissement : suppression de l'agent {agent.id} impossible : {exc})")
 
     response = call_with_fallback(cfg, request)
     texte, refs = collect_conversation_output(response)
@@ -542,7 +596,7 @@ def run_pipeline(client, demande, checkpoint=None):
     outputs = {"demande": demande}
     total = len(AGENTS)
     for i, agent in enumerate(AGENTS, 1):
-        print(f"[{i}/{total}] {agent['title']}...")
+        log(f"[{i}/{total}] {agent['title']}...")
         outputs[agent["name"]] = run_agent(client, agent, outputs)
         if checkpoint:
             checkpoint(outputs)
@@ -647,7 +701,7 @@ def apply_correction(client, outputs, rapport, checkpoint=None):
         if agent["name"] not in a_refaire:
             continue
         corrections = consignes.get(agent["name"])
-        print(f"  {'correction' if corrections else 'mise à jour'} : {agent['title']}...")
+        log(f"  {'correction' if corrections else 'mise à jour'} : {agent['title']}...")
         outputs[agent["name"]] = run_agent(client, agent, outputs, corrections)
         if checkpoint:
             checkpoint(outputs)
@@ -1286,52 +1340,33 @@ def make_client(api_key):
     return Mistral(api_key=api_key, retry_config=retry, timeout_ms=300000)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Workflow agentique de création de cours (Mistral)")
-    parser.add_argument("demande", nargs="?",
-                        help="Demande du prof, ex: 'Terminale bac pro Commerce, thème: la mondialisation, 2h, TD'")
-    parser.add_argument("--rendu", metavar="COURS_FINAL_JSON",
-                        help="Régénère uniquement les documents .docx à partir d'un cours_final.json existant "
-                             "(aucun appel à l'API)")
-    parser.add_argument("--outdir", default="output")
-    parser.add_argument("--model", default=MODELES["principal"],
-                        help=f"Modèle principal (défaut : {MODELES['principal']}, ou $MISTRAL_MODEL)")
-    parser.add_argument("--model-leger", default=MODELES["leger"],
-                        help=f"Modèle léger : évaluation et relecture (défaut : {MODELES['leger']}, ou $MISTRAL_MODEL_LEGER)")
-    parser.add_argument("--model-secours", default=MODELES["secours"],
-                        help=f"Modèle de secours si un modèle est refusé (défaut : {MODELES['secours']}, ou $MISTRAL_MODEL_SECOURS)")
-    parser.add_argument("--max-relectures", type=int, default=MAX_RELECTURES)
-    args = parser.parse_args()
-    MODELES.update(principal=args.model, leger=args.model_leger, secours=args.model_secours)
-    ROUTEUR.reset()
+class GenerationError(Exception):
+    """Échec de la génération ; `outdir` contient les productions partielles (cours_final.json)."""
 
-    if args.rendu:
-        source = Path(args.rendu)
-        data = json.loads(source.read_text(encoding="utf-8"))
-        ROUTEUR.utilises.update(data.get("modeles_utilises") or {})
-        fichiers = build_deliverables(source.parent, data["demande"], data["dossier"],
-                                      data.get("rapports_relecture") or [], bool(data.get("livre")))
-        print(f"Documents régénérés dans {source.parent}/ :")
-        for f in fichiers:
-            print(f"  - {f.name}")
-        return
-    if not args.demande:
-        parser.error("la demande du prof est obligatoire (sauf avec --rendu)")
+    def __init__(self, message, outdir):
+        super().__init__(message)
+        self.outdir = outdir
 
-    api_key = os.environ.get("MISTRAL_API_KEY")
-    if not api_key:
-        sys.exit("Erreur : variable d'environnement MISTRAL_API_KEY manquante.")
 
-    client = make_client(api_key)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    outdir = Path(args.outdir) / stamp
+def generer_cours(client, demande, outdir, max_relectures=MAX_RELECTURES, avancement=None):
+    """Exécute tout le workflow et écrit les documents dans `outdir`.
+
+    `avancement(fraction, libelle)` est appelé à chaque étape (barre de progression de l'interface).
+    Retourne un dict : outdir, fichiers, livre, statut, rapports, dossier.
+    """
+    outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
-
     rapports = []
+    nb_agents = len(AGENTS)
+    fait = {"agents": 0}
+
+    def avancer(fraction, libelle):
+        if avancement:
+            avancement(min(fraction, 1.0), libelle)
 
     def save(outputs, statut="en_cours", livre=False):
         final = {
-            "demande": args.demande,
+            "demande": demande,
             "modeles_configures": dict(MODELES),
             "modeles_utilises": dict(ROUTEUR.utilises),
             "substitutions": dict(ROUTEUR.substitutions),
@@ -1343,48 +1378,107 @@ def main():
         }
         (outdir / "cours_final.json").write_text(json.dumps(final, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print("Lancement de la chaîne d'agents...")
+    def checkpoint_generation(outputs):
+        save(outputs)
+        fait["agents"] += 1
+        if fait["agents"] < nb_agents:
+            avancer(0.7 * fait["agents"] / nb_agents, f"Rédaction : {AGENTS[fait['agents']]['title']}")
+
+    log("Lancement de la chaîne d'agents...")
+    avancer(0.0, f"Rédaction : {AGENTS[0]['title']}")
     try:
-        outputs = run_pipeline(client, args.demande, checkpoint=save)
+        outputs = run_pipeline(client, demande, checkpoint=checkpoint_generation)
     except Exception as exc:
-        sys.exit(f"Erreur pendant la génération : {exc}\nProductions partielles : {outdir}/cours_final.json")
+        raise GenerationError(f"Erreur pendant la génération : {exc}", outdir) from exc
 
     livre = False
     statut = "termine"
-    for iteration in range(1, args.max_relectures + 1):
-        print(f"[relecture {iteration}/{args.max_relectures}] Évaluation par le relecteur...")
+    for iteration in range(1, max_relectures + 1):
+        avancer(0.7 + 0.3 * (iteration - 1) / max_relectures, f"Relecture {iteration}/{max_relectures}")
+        log(f"[relecture {iteration}/{max_relectures}] Évaluation par le relecteur...")
         try:
             rapport, _ = run_relecture(client, outputs)
         except Exception as exc:
-            print(f"  relecture impossible : {exc}")
+            log(f"  relecture impossible : {exc}")
             statut = "relecture_en_erreur"
             break
         rapports.append(rapport)
         save(outputs)
-        print(f"  score = {rapport['score_global']}/5, livraison = {rapport['livraison']}")
+        log(f"  score = {rapport['score_global']}/5, livraison = {rapport['livraison']}")
         if rapport["livraison"] == "oui":
             livre = True
             break
-        if iteration < args.max_relectures:
+        if iteration < max_relectures:
             cibles = ", ".join(f"agent {c['agent']}" for c in rapport["corrections"]) or "aucun agent"
-            print(f"  renvoi vers : {cibles}")
+            log(f"  renvoi vers : {cibles}")
+            avancer(0.7 + 0.3 * (iteration - 0.5) / max_relectures, f"Corrections demandées par la relecture {iteration}")
             try:
                 outputs, corrected = apply_correction(client, outputs, rapport, checkpoint=save)
             except Exception as exc:
-                print(f"  correction impossible : {exc}")
+                log(f"  correction impossible : {exc}")
                 statut = "correction_en_erreur"
                 break
             if not corrected:
-                print("  aucun agent valide désigné pour la correction, arrêt des relectures.")
+                log("  aucun agent valide désigné pour la correction, arrêt des relectures.")
                 break
 
     save(outputs, statut=statut, livre=livre)
-    fichiers = build_deliverables(outdir, args.demande, outputs, rapports, livre)
-
+    avancer(0.98, "Mise en page des documents")
+    fichiers = build_deliverables(outdir, demande, outputs, rapports, livre)
     if not livre:
-        print(f"⚠ Seuil de {SEUIL_LIVRAISON}/5 non atteint : cours à relire attentivement.")
-    print(f"Terminé en {len(rapports)} relecture(s). Documents dans {outdir}/ :")
-    for f in fichiers:
+        log(f"⚠ Seuil de {SEUIL_LIVRAISON}/5 non atteint : cours à relire attentivement.")
+    avancer(1.0, "Terminé")
+    return {"outdir": outdir, "fichiers": fichiers, "livre": livre, "statut": statut,
+            "rapports": rapports, "dossier": outputs}
+
+
+def rendre_depuis_json(source, outdir=None):
+    """Régénère les documents à partir d'un cours_final.json (aucun appel à l'API). Retourne les chemins."""
+    source = Path(source)
+    data = json.loads(source.read_text(encoding="utf-8"))
+    ROUTEUR.utilises.update(data.get("modeles_utilises") or {})
+    return build_deliverables(Path(outdir or source.parent), data["demande"], data["dossier"],
+                              data.get("rapports_relecture") or [], bool(data.get("livre")))
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Workflow agentique de création de cours (Mistral)")
+    parser.add_argument("demande", nargs="?",
+                        help="Demande du prof, ex: 'Terminale bac pro Commerce, thème: la mondialisation, 2h, TD'")
+    parser.add_argument("--rendu", metavar="COURS_FINAL_JSON",
+                        help="Régénère uniquement les documents .docx à partir d'un cours_final.json existant "
+                             "(aucun appel à l'API)")
+    parser.add_argument("--outdir", default="output")
+    parser.add_argument("--model", default=MODELES_DEFAUT["principal"],
+                        help=f"Modèle principal (défaut : {MODELES_DEFAUT['principal']}, ou $MISTRAL_MODEL)")
+    parser.add_argument("--model-leger", default=MODELES_DEFAUT["leger"],
+                        help=f"Modèle léger : évaluation et relecture (défaut : {MODELES_DEFAUT['leger']}, ou $MISTRAL_MODEL_LEGER)")
+    parser.add_argument("--model-secours", default=MODELES_DEFAUT["secours"],
+                        help=f"Modèle de secours si un modèle est refusé (défaut : {MODELES_DEFAUT['secours']}, ou $MISTRAL_MODEL_SECOURS)")
+    parser.add_argument("--max-relectures", type=int, default=MAX_RELECTURES)
+    args = parser.parse_args()
+    configurer_session({"principal": args.model, "leger": args.model_leger, "secours": args.model_secours})
+
+    if args.rendu:
+        fichiers = rendre_depuis_json(args.rendu)
+        print(f"Documents régénérés dans {Path(args.rendu).parent}/ :")
+        for f in fichiers:
+            print(f"  - {f.name}")
+        return
+    if not args.demande:
+        parser.error("la demande du prof est obligatoire (sauf avec --rendu)")
+
+    api_key = os.environ.get("MISTRAL_API_KEY")
+    if not api_key:
+        sys.exit("Erreur : variable d'environnement MISTRAL_API_KEY manquante.")
+
+    outdir = Path(args.outdir) / datetime.now().strftime("%Y%m%d_%H%M%S")
+    try:
+        resultat = generer_cours(make_client(api_key), args.demande, outdir, args.max_relectures)
+    except GenerationError as exc:
+        sys.exit(f"{exc}\nProductions partielles : {exc.outdir}/cours_final.json")
+    print(f"Terminé en {len(resultat['rapports'])} relecture(s). Documents dans {outdir}/ :")
+    for f in resultat["fichiers"]:
         print(f"  - {f.name}")
 
 
