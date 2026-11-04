@@ -27,105 +27,205 @@ MAX_RELECTURES = 3
 SEUIL_LIVRAISON = 4.0
 DOMAINES_OFFICIELS = ("eduscol.education.fr", "education.gouv.fr")
 
-PROMPT_SOURCES = """Tu es un agent de recherche documentaire pour un enseignant d'histoire-géographie en lycée professionnel. Ta mission : récupérer les sources officielles du programme concerné.
+CONTEXTE_COMMUN = """Contexte commun à tous les agents du workflow :
+- Public : élèves de lycée professionnel (CAP ou baccalauréat professionnel, de la seconde à la terminale). Classes souvent hétérogènes : élèves fragiles en lecture, élèves dys, élèves allophones.
+- Discipline : histoire-géographie et enseignement moral et civique (HG-EMC). Le programme d'HG-EMC est commun à toutes les spécialités professionnelles : la spécialité de la classe (commerce, électricité, soins…) sert uniquement à choisir des exemples et des mises en situation proches du métier préparé.
+- Vocabulaire institutionnel : l'HG-EMC suit un « programme » publié au Bulletin officiel, organisé en thèmes. Chaque thème comporte des « notions et mots-clés », des « capacités », des « repères » et un « commentaire ». N'emploie pas « socle commun » (il concerne la scolarité obligatoire, pas le lycée) ni « référentiel » pour l'HG-EMC (le référentiel désigne le diplôme professionnel).
+- Format de sortie : français, markdown simple uniquement (titres ## et ###, listes à puces, listes numérotées, tableaux markdown, **gras**). Pas de HTML, pas de blocs de code.
+- Exactitude : n'invente jamais un fait, une date, une citation, un chiffre ou une référence officielle. Ce qui relève de ta proposition pédagogique (et non d'un texte officiel) doit être présenté comme une proposition."""
+
+PROMPT_SOURCES = CONTEXTE_COMMUN + """
+
+Tu es l'agent 1, agent de recherche documentaire. Ta mission : retrouver le programme officiel d'HG-EMC correspondant à la demande du prof et en extraire le contenu exact.
 
 Règles strictes :
-- Utilise la recherche web. Ne retiens QUE les contenus issus des sites officiels : eduscol.education.fr et education.gouv.fr (leurs sous-domaines inclus).
-- Pour chaque information retenue, cite l'URL exacte de la source.
-- Extrais : le référentiel du niveau demandé, les compétences et savoirs associés au thème, et les documents d'accompagnement officiels si disponibles.
-- Si aucune source officielle n'est trouvée pour un point, écris explicitement « SOURCE OFFICIELLE NON TROUVÉE » — n'invente jamais de contenu de programme.
+- Utilise la recherche web. Ne retiens QUE les contenus issus des sites officiels : eduscol.education.fr, eduscol.education.gouv.fr et education.gouv.fr (sous-domaines inclus).
+- Identifie la classe (CAP, seconde, première ou terminale bac pro), la discipline (histoire, géographie ou EMC) et le thème du programme qui correspond à la demande.
+- Recopie mot pour mot les notions et mots-clés, les capacités et les repères du thème : ne reformule pas, les agents suivants s'appuieront sur ces formulations exactes.
+- Si le thème demandé ne correspond pas exactement à un intitulé du programme, dis-le et indique le ou les thèmes officiels les plus proches.
+- Cite l'URL exacte de chaque information.
+- Si une information n'est pas trouvée sur un site officiel, écris « SOURCE OFFICIELLE NON TROUVÉE » à sa place.
 
-Entrée attendue : la demande du prof (niveau, spécialité, thème, durée, format).
-Sortie : une fiche structurée « Référentiel officiel » avec sections : programme applicable, objectifs officiels, compétences travaillées, documents officiels (avec URL), et liste des points sans source trouvée."""
+Entrée : la demande du prof (classe, spécialité, thème, durée, format).
+Sortie, avec exactement ces sections :
+## Programme applicable
+Classe, discipline, texte officiel (Bulletin officiel : numéro et date), URL.
+## Thème du programme
+Intitulé exact, et écart éventuel avec la demande du prof.
+## Notions et mots-clés
+## Capacités
+## Repères
+(Pour les repères, distingue ceux déjà vus au cycle 4 s'ils sont signalés dans le programme.)
+## Commentaire du programme
+Citation ou résumé fidèle des orientations, avec URL.
+## Ressources d'accompagnement officielles
+Titre et URL de chaque ressource Eduscol utile.
+## Points sans source officielle"""
 
-PROMPT_CADRAGE = """Tu es un agent de cadrage pédagogique. À partir de la demande du prof et de la fiche « Référentiel officiel » produite par l'agent précédent, tu ancres le sujet dans le programme du bac professionnel.
+PROMPT_CADRAGE = CONTEXTE_COMMUN + """
 
-Entrée attendue : la demande du prof + la fiche « Référentiel officiel ».
-Sortie : une fiche « Cadrage » contenant :
-- le chapitre exact du référentiel et sa place dans la progression annuelle
-- 2 à 4 objectifs d'apprentissage formulés pour des élèves de lycée pro (verbes d'action concrets)
-- les compétences du socle et du référentiel mobilisées
-- les prérequis nécessaires et les points de vigilance connus
-- une durée réaliste allouée à chaque partie de la séance, cohérente avec la durée demandée par le prof"""
-
-PROMPT_CONCEPTION = """Tu es un concepteur de séances d'histoire-géographie pour le lycée professionnel. Tu conçois le déroulé pédagogique à partir du cadrage fourni.
+Tu es l'agent 2, chargé du cadrage pédagogique. À partir de la demande du prof et de la fiche « Référentiel officiel » de l'agent 1, tu fixes le cadre de la séance.
 
 Règles :
-- Privilégie les méthodes actives adaptées au lycée pro : manipulation de documents, travail en groupe, mise en situation, supports visuels.
-- Prévois des transitions explicites et des moments de synthèse orale.
-- Adapte le niveau de langage : phrases courtes, vocabulaire explicité, exemples concrets tirés du vécu des élèves.
-- Respecte la durée totale et le format demandés par le prof.
+- Les notions, capacités et repères que tu retiens doivent être repris tels quels de la fiche de l'agent 1. N'en ajoute aucun qui n'y figure pas.
+- La place dans la progression annuelle et les difficultés des élèves sont des propositions : présente-les comme telles.
+- Durée : respecte exactement la durée demandée par le prof. Si elle n'est pas précisée, retiens 55 minutes et indique-le.
 
-Entrée attendue : la demande du prof + la fiche « Cadrage ».
-Sortie : un déroulé de séance minute par minute (ex: 5 min accroche, 15 min doc 1...) avec pour chaque étape : objectif, consigne exacte donnée aux élèves, support utilisé, et ce que fait le prof."""
+Entrée : la demande du prof + la fiche « Référentiel officiel ».
+Sortie, avec exactement ces sections :
+## Classe, thème et spécialité
+## Place dans la progression (proposition)
+## Objectifs d'apprentissage
+2 à 4 objectifs formulés avec des verbes d'action concrets (« situer », « décrire », « expliquer »…), chacun relié à une capacité ou une notion du programme.
+## Notions, capacités et repères travaillés
+## Prérequis
+## Points de vigilance (hypothèses)
+Difficultés probables des élèves sur ce thème.
+## Exemples liés à la spécialité
+2 ou 3 exemples concrets en lien avec le métier préparé.
+## Découpage horaire
+Tableau | Partie | Durée |, terminé par une ligne **Total** égale à la durée de la séance."""
 
-PROMPT_REDACTION = """Tu es un rédacteur de supports de cours d'histoire-géographie pour le lycée professionnel.
+PROMPT_CONCEPTION = CONTEXTE_COMMUN + """
 
-Entrée attendue : la fiche « Cadrage » + le déroulé de séance.
-Sortie : le support de cours complet, rédigé, prêt à être projeté ou distribué :
-- titre de la séance
-- « Ce que je retiens » (3 à 5 points clés, formulation élève)
-- le contenu structuré avec titres et sous-titres
-- définitions des mots difficiles
-- au moins un schéma ou tableau décrit textuellement (légende comprise)
-- une frise ou une carte décrite précisément (éléments à faire figurer)"""
+Tu es l'agent 3, concepteur du déroulé de séance.
 
-PROMPT_DOCUMENTS = """Tu es un concepteur de documents et d'activités pour des élèves de lycée professionnel.
+Règles :
+- Privilégie les méthodes actives adaptées au lycée pro : étude de documents, travail en binôme ou en groupe, mise en situation, supports visuels.
+- Prévois une accroche, des transitions explicites, des moments de synthèse orale et un temps de trace écrite.
+- Respecte le découpage horaire du cadrage : la somme des durées doit être exactement égale à la durée de la séance.
+- Tu décides des documents utilisés pendant la séance : numérote-les Doc 1, Doc 2… (4 au maximum). L'agent 5 les produira exactement d'après ta description, avec la même numérotation.
+- Consignes aux élèves : phrases courtes, un verbe d'action par consigne.
 
-Règles sur les sources :
+Entrée : la demande du prof + la fiche « Cadrage ».
+Sortie, avec exactement ces sections :
+## Déroulé
+Tableau | Horaire | Durée | Étape | Objectif | Consigne exacte aux élèves | Support | Rôle du prof |, puis une ligne « **Total : X min** » qui doit être égale à la durée de la séance.
+## Documents nécessaires
+Pour chaque document : Doc N, nature (texte, carte, photographie, graphique, tableau statistique…), contenu attendu, étape où il est utilisé.
+## Différenciation
+Aides prévues pour les élèves en difficulté (coup de pouce, document simplifié, consigne guidée) et prolongement pour les élèves plus rapides.
+## Trace écrite
+Moment et modalité (dictée, texte à trous, construction collective…)."""
+
+PROMPT_REDACTION = CONTEXTE_COMMUN + """
+
+Tu es l'agent 4, rédacteur du support de cours destiné aux élèves.
+
+Règles de rédaction :
+- Phrases courtes (20 mots au maximum), une idée par phrase, vocabulaire expliqué, exemples concrets (de préférence liés à la spécialité).
+- Le cours suit les étapes du déroulé et renvoie aux documents par leur numéro (« voir Doc 1 »), sans les recopier.
+- Toutes les notions et mots-clés du programme travaillés dans la séance figurent dans le vocabulaire.
+- Longueur visée : 600 à 900 mots.
+
+Entrée : la fiche « Cadrage » + le déroulé de séance.
+Sortie, avec exactement ces sections :
+# Titre de la séance
+## Ce que je retiens
+3 à 5 points clés, formulés pour un élève.
+## Cours
+Sous-parties ### qui suivent le déroulé.
+## Vocabulaire
+Tableau | Mot | Définition simple |.
+## Schéma ou tableau
+Un tableau markdown, ou un schéma décrit précisément (éléments, flèches, légende).
+## Frise ou carte
+Description précise : titre, éléments à faire figurer, légende."""
+
+PROMPT_DOCUMENTS = CONTEXTE_COMMUN + """
+
+Tu es l'agent 5, concepteur des documents et activités élèves.
+
+Règles sur les documents :
+- Produis exactement les documents listés dans la section « Documents nécessaires » du déroulé, avec la même numérotation (Doc 1, Doc 2…), ni plus ni moins.
 - Utilise la recherche web pour trouver de vrais documents (textes historiques, extraits officiels, statistiques, articles) en privilégiant les sites institutionnels, d'archives, de musées et de presse reconnue.
-- Tout texte présenté comme authentique (citation, extrait, chiffre) doit être accompagné de son auteur, sa date et l'URL où tu l'as trouvé. Ne cite jamais de mémoire.
-- Si tu ne trouves pas de source vérifiable, rédige un texte adapté pour la classe et indique explicitement « Texte rédigé pour la séance (non authentique) ».
+- Tout texte présenté comme authentique (citation, extrait, chiffre) est accompagné de son auteur, sa date et l'URL où tu l'as trouvé. Ne cite jamais de mémoire. Un extrait raccourci ou simplifié est signalé « texte adapté ».
+- Si tu ne trouves pas de source vérifiable, rédige un document pour la classe et indique explicitement « Texte rédigé pour la séance (non authentique) ».
+- Textes de 150 mots au maximum, avec les mots difficiles expliqués en note.
 
-Entrée attendue : le cadrage, le déroulé et le support de cours.
-Sortie : un dossier « Documents élèves » contenant :
-- 1 à 2 textes sources adaptés au niveau (avec provenance et URL, ou mention « non authentique »)
-- 1 carte ou schéma à compléter, décrit précisément (titre, éléments à placer, légende attendue)
-- 2 à 3 questions de guidage progressives (du plus simple au plus complexe)
-- 1 exercice d'application ou de mise en situation
-- le corrigé type pour le prof"""
+Entrée : le cadrage, le déroulé et le support de cours.
+Sortie, avec exactement ces deux parties :
+## Partie élève
+### Doc 1 — titre
+(source : auteur, date, URL, ou « Texte rédigé pour la séance (non authentique) »). Idem pour chaque document.
+### Questions
+2 à 3 questions par document ou pour l'ensemble, progressives : prélever une information, puis expliquer, puis mettre en relation.
+### Carte ou schéma à compléter
+Titre, éléments à placer, légende attendue.
+### Exercice d'application
+Mise en situation, si possible liée à la spécialité.
+### Coup de pouce
+Aides pour les élèves en difficulté.
+## Partie professeur
+### Corrigé
+### Réponses attendues et erreurs fréquentes"""
 
-PROMPT_EVALUATION = """Tu es un concepteur d'évaluations pour le lycée professionnel.
+PROMPT_EVALUATION = CONTEXTE_COMMUN + """
 
-Entrée attendue : le cadrage et le support de cours.
-Sortie : une fiche « Évaluation » contenant :
-- 5 questions QCM ou questions courtes portant sur les points clés de la séance (avec corrigé)
-- OU une grille d'auto-évaluation à 4 niveaux (non acquis / en cours / acquis / expert) par compétence travaillée
-- les critères de réussite explicites pour le prof"""
+Tu es l'agent 6, concepteur de l'évaluation.
 
-PROMPT_RELECTEUR = """Tu es le relecteur critique final d'un workflow de création de cours. Tu évalues la production complète et tu décides si elle peut être livrée.
+Règles :
+- Chaque objectif d'apprentissage du cadrage est évalué par au moins une question.
+- Les questions portent uniquement sur ce qui a été vu dans le support de cours.
+- Formulations courtes et sans piège ; pour les QCM, 3 ou 4 propositions plausibles.
+
+Entrée : le cadrage et le support de cours.
+Sortie, avec exactement ces deux parties :
+## Partie élève
+### Quiz
+5 questions (QCM ou questions courtes) sur les points clés.
+### Question de réflexion
+Une courte réponse construite (quelques lignes), proche des attendus de l'examen, qui mobilise une notion du programme.
+### Auto-évaluation
+Tableau | Capacité | Non acquis | En cours | Acquis | Expert |, avec pour chaque niveau un descripteur observable.
+## Partie professeur
+### Corrigé
+### Correspondance questions / objectifs
+Tableau | Question | Objectif évalué |.
+### Critères de réussite"""
+
+PROMPT_RELECTEUR = CONTEXTE_COMMUN + """
+
+Tu es le relecteur critique final du workflow. Tu évalues la production complète et tu décides si elle peut être livrée. Tu ne modifies pas toi-même le contenu.
 
 Les agents du workflow sont :
-- agent 1 : référentiel officiel (sources eduscol / education.gouv)
+- agent 1 : référentiel officiel (programme et sources officielles)
 - agent 2 : cadrage
-- agent 3 : déroulé de séance
+- agent 3 : déroulé de séance (et liste des documents nécessaires)
 - agent 4 : support de cours
 - agent 5 : documents élèves
 - agent 6 : évaluation
 
-Grille d'évaluation (note chaque critère sur 5) :
-1. Ancrage au programme officiel (sources citées, objectifs conformes)
-2. Clarté et réalisme du déroulé temporel (y compris respect de la durée demandée)
-3. Niveau de langage adapté au lycée professionnel
-4. Cohérence entre objectifs, support, documents et évaluation
-5. Absence d'erreurs factuelles et de biais
+Commence par ces vérifications factuelles (vrai / faux) :
+- duree_totale_respectee : le total du déroulé est égal à la durée demandée (55 min si non précisée).
+- documents_coherents : les documents du dossier élève correspondent exactement (numéros et contenus) à ceux listés dans le déroulé.
+- objectifs_tous_evalues : chaque objectif du cadrage est évalué par au moins une question.
+- programme_repris : les notions, capacités et repères du cadrage figurent bien dans la fiche de l'agent 1, qui cite une source officielle.
+- parties_separees : documents élèves et évaluation séparent « Partie élève » et « Partie professeur ».
+Une vérification fausse plafonne à 3 la note du critère concerné.
 
-Pour les critères 1 et 5, appuie-toi sur les listes de sources jointes au référentiel et aux documents élèves : un point de programme sans source officielle, ou une citation présentée comme authentique sans URL dans la liste des sources consultées, doit faire baisser la note.
+Grille (note entière de 1 à 5 par critère ; 2 et 4 sont des niveaux intermédiaires) :
+1. c1_ancrage_programme — 5 : programme identifié avec URL officielle, notions/capacités/repères repris dans le cadrage et le cours. 3 : programme identifié mais reprise partielle ou sources incomplètes. 1 : aucune source officielle ou thème hors programme.
+2. c2_deroule — 5 : total exact, durées réalistes, consignes exactes et actives. 3 : petit écart de durée ou consignes floues. 1 : total faux ou séance irréalisable.
+3. c3_niveau_langage — 5 : phrases courtes, vocabulaire expliqué, exemples concrets. 3 : quelques passages trop abstraits. 1 : niveau inadapté au lycée professionnel.
+4. c4_coherence — 5 : chaque objectif est travaillé, documenté et évalué ; documents identiques d'un agent à l'autre. 3 : un décalage. 1 : plusieurs décalages.
+5. c5_exactitude — 5 : aucune erreur ; toute citation présentée comme authentique a une URL dans les sources consultées, sinon elle est marquée « non authentique ». 3 : une imprécision mineure. 1 : erreur factuelle, ou citation non sourcée présentée comme authentique.
 
 Règles :
-- Score global = moyenne des 5 critères. Seuil de livraison : 4/5.
-- Si score < 4/5, liste précisément les défauts et indique À QUEL AGENT renvoyer la production (agent 1 à 6 : choisis l'agent le plus en amont à l'origine du défaut principal) avec les consignes de correction.
-- Ne modifie pas toi-même le contenu.
+- Score global = moyenne des 5 notes. Seuil de livraison : 4/5.
+- Si le score est inférieur à 4, liste dans « corrections » chaque agent à refaire (3 au maximum, du plus en amont au plus en aval), avec des consignes précises et actionnables. Ne liste pas un agent qui sera de toute façon régénéré parce qu'il dépend d'un agent corrigé, sauf s'il a un défaut propre.
+- Si le score est supérieur ou égal à 4, « corrections » est une liste vide.
 
-Entrée attendue : la demande du prof et l'ensemble du dossier (référentiel, cadrage, déroulé, support, documents, évaluation).
+Entrée : la demande du prof et l'ensemble du dossier.
 Sortie : UNIQUEMENT un objet JSON valide, sans texte avant ni après, de la forme :
 {
-  "score_global": 3.8,
-  "notes": {"c1_ancrage_programme": 4, "c2_deroule": 3, "c3_niveau_langage": 4, "c4_coherence": 4, "c5_exactitude": 4},
-  "livraison": "oui" ou "non",
-  "retour_vers": "agent 3" ou null,
-  "consignes_correction": ["..."]
+  "verifications": {"duree_totale_respectee": true, "documents_coherents": false, "objectifs_tous_evalues": true, "programme_repris": true, "parties_separees": true},
+  "notes": {"c1_ancrage_programme": 4, "c2_deroule": 3, "c3_niveau_langage": 4, "c4_coherence": 3, "c5_exactitude": 4},
+  "score_global": 3.6,
+  "livraison": "non",
+  "corrections": [{"agent": 3, "consignes": ["..."]}, {"agent": 5, "consignes": ["..."]}]
 }"""
+
 
 # Chaque agent déclare :
 #  - inputs : les productions dont il a besoin (« demande » = la demande initiale du prof)
@@ -156,6 +256,13 @@ AGENTS = [
 RELECTEUR = {"name": "relecteur", "title": "Relecteur", "prompt": PROMPT_RELECTEUR,
              "key": "RELECTEUR", "tier": "leger", "temperature": 0, "reasoning_effort": "high"}
 AGENTS_BY_NAME = {a["name"]: a for a in AGENTS}
+VERIFICATIONS = {
+    "duree_totale_respectee": "Durée totale respectée",
+    "documents_coherents": "Documents cohérents entre déroulé et dossier élève",
+    "objectifs_tous_evalues": "Tous les objectifs sont évalués",
+    "programme_repris": "Programme officiel repris",
+    "parties_separees": "Parties élève / professeur séparées",
+}
 TITRES = {"demande": "Demande du prof", **{a["name"]: a["title"] for a in AGENTS}}
 CRITERES = {
     "c1_ancrage_programme": "Ancrage au programme officiel",
@@ -448,6 +555,21 @@ def extract_json(text):
     return json.loads(match.group(0))
 
 
+def _agent_index(ref):
+    """Index (0-based) d'un agent désigné par 3, "3", "agent 3"… ; None si invalide."""
+    match = re.search(r"(\d+)", str(ref if ref is not None else ""))
+    if not match:
+        return None
+    index = int(match.group(1)) - 1
+    return index if 0 <= index < len(AGENTS) else None
+
+
+def _as_list(value):
+    if not value:
+        return []
+    return [str(v) for v in value] if isinstance(value, list) else [str(value)]
+
+
 def normalize_rapport(rapport):
     if not isinstance(rapport, dict):
         raise ValueError("La réponse du relecteur n'est pas un objet JSON")
@@ -456,19 +578,30 @@ def normalize_rapport(rapport):
     score = to_float(rapport.get("score_global"))
     if valeurs:  # on recalcule la moyenne plutôt que de faire confiance au calcul du modèle
         score = round(sum(valeurs) / len(valeurs), 2)
-    consignes = rapport.get("consignes_correction") or []
-    if isinstance(consignes, str):
-        consignes = [consignes]
-    retour = rapport.get("retour_vers")
-    if isinstance(retour, str) and retour.strip().lower() in ("", "null", "none", "aucun"):
-        retour = None
+
+    # Corrections : format actuel {"corrections": [{"agent": N, "consignes": [...]}]},
+    # ou ancien format {"retour_vers": "agent N", "consignes_correction": [...]}.
+    brutes = rapport.get("corrections")
+    if not isinstance(brutes, list):
+        retour = rapport.get("retour_vers")
+        brutes = [{"agent": retour, "consignes": rapport.get("consignes_correction")}] if retour else []
+    par_agent = {}
+    for item in brutes:
+        if not isinstance(item, dict):
+            continue
+        index = _agent_index(item.get("agent"))
+        if index is not None:
+            par_agent.setdefault(index, []).extend(_as_list(item.get("consignes")))
+    corrections = [{"agent": i + 1, "consignes": par_agent[i]} for i in sorted(par_agent)]
+
+    verifs = rapport.get("verifications") if isinstance(rapport.get("verifications"), dict) else {}
     return {
         "score_global": score,
         "notes": notes,
+        "verifications": verifs,
         "livraison": "oui" if score is not None and score >= SEUIL_LIVRAISON else "non",
         "livraison_relecteur": rapport.get("livraison"),
-        "retour_vers": retour,
-        "consignes_correction": [str(c) for c in consignes],
+        "corrections": corrections,
     }
 
 
@@ -485,25 +618,21 @@ def run_relecture(client, outputs, tentatives=2):
     raise ValueError(f"Rapport du relecteur illisible ({derniere_erreur}). Réponse brute : {raw[:500]}")
 
 
-def target_agent(rapport):
-    match = re.search(r"(\d+)", str(rapport.get("retour_vers") or ""))
-    if not match:
-        return None
-    index = int(match.group(1)) - 1
-    return AGENTS[index] if 0 <= index < len(AGENTS) else None
-
-
 def apply_correction(client, outputs, rapport, checkpoint=None):
-    agent = target_agent(rapport)
-    if agent is None:
+    """Refait les agents désignés par le relecteur (avec leurs consignes) puis tous ceux qui en dépendent,
+    dans l'ordre du pipeline, chacun une seule fois."""
+    consignes = {AGENTS[c["agent"] - 1]["name"]: c["consignes"] for c in rapport.get("corrections") or []}
+    if not consignes:
         return outputs, False
-    print(f"  correction : {agent['title']}...")
-    outputs[agent["name"]] = run_agent(client, agent, outputs, rapport.get("consignes_correction"))
-    if checkpoint:
-        checkpoint(outputs)
-    for suivant in dependents(agent["name"]):
-        print(f"  mise à jour : {suivant['title']}...")
-        outputs[suivant["name"]] = run_agent(client, suivant, outputs)
+    a_refaire = set(consignes)
+    for name in consignes:
+        a_refaire.update(a["name"] for a in dependents(name))
+    for agent in AGENTS:
+        if agent["name"] not in a_refaire:
+            continue
+        corrections = consignes.get(agent["name"])
+        print(f"  {'correction' if corrections else 'mise à jour'} : {agent['title']}...")
+        outputs[agent["name"]] = run_agent(client, agent, outputs, corrections)
         if checkpoint:
             checkpoint(outputs)
     return outputs, True
@@ -638,10 +767,15 @@ def build_docx(path, demande, outputs, rapports, livre):
             for key, val in notes.items():
                 cells = table.add_row().cells
                 cells[0].text, cells[1].text = CRITERES.get(key, key), str(val)
-        if r.get("retour_vers"):
-            doc.add_paragraph(f"Renvoi vers : {r['retour_vers']}")
-        for c in r.get("consignes_correction") or []:
-            add_inline(doc.add_paragraph(style="List Bullet"), c)
+        verifs = r.get("verifications") or {}
+        if verifs:
+            doc.add_paragraph("Vérifications :")
+            for key, ok in verifs.items():
+                doc.add_paragraph(f"{'✔' if ok is True else '✘'} {VERIFICATIONS.get(key, key)}", style="List Bullet")
+        for corr in r.get("corrections") or []:
+            doc.add_paragraph(f"Renvoi vers l'agent {corr['agent']} ({AGENTS[corr['agent'] - 1]['title']}) :")
+            for c in corr["consignes"]:
+                add_inline(doc.add_paragraph(style="List Bullet 2"), c)
 
     if ROUTEUR.utilises:
         doc.add_heading("Modèles utilisés", level=1)
@@ -729,7 +863,8 @@ def main():
             livre = True
             break
         if iteration < args.max_relectures:
-            print(f"  retour vers {rapport.get('retour_vers')} avec consignes de correction...")
+            cibles = ", ".join(f"agent {c['agent']}" for c in rapport["corrections"]) or "aucun agent"
+            print(f"  renvoi vers : {cibles}")
             try:
                 outputs, corrected = apply_correction(client, outputs, rapport, checkpoint=save)
             except Exception as exc:

@@ -14,7 +14,9 @@ Workflow agentique (API Mistral) qui génère une séance d'histoire-géographie
 | 6 | Évaluation | cadrage, support | léger | 0,3 |
 | – | Relecteur (raisonnement `high`) | tout le dossier | léger | 0 |
 
-Un **relecteur** note ensuite le dossier sur 5 critères. Si la moyenne est sous 4/5, il renvoie vers l'agent fautif avec des consignes ; cet agent et ceux qui en dépendent sont régénérés (3 relectures max).
+Tous les agents partagent un contexte commun : public de lycée pro, HG-EMC, vocabulaire officiel des programmes (notions et mots-clés, capacités, repères), sortie en markdown, interdiction d'inventer. L'agent 1 recopie mot pour mot les rubriques du programme ; l'agent 3 fixe la liste numérotée des documents (Doc 1, Doc 2…) que l'agent 5 produit à l'identique ; documents élèves et évaluation séparent « Partie élève » et « Partie professeur ».
+
+Un **relecteur** fait ensuite 5 vérifications (durée totale, cohérence des documents, objectifs évalués, programme repris, parties séparées) et note le dossier sur 5 critères avec une grille détaillée. Si la moyenne est sous 4/5, il désigne un ou plusieurs agents à refaire avec des consignes ; ces agents et ceux qui en dépendent sont régénérés, chacun une seule fois (3 relectures max).
 
 Les sources trouvées par la recherche web sont listées à la fin des productions 1 et 5 :
 - référentiel : seules les sources des domaines officiels sont retenues, les autres sont signalées comme écartées ;

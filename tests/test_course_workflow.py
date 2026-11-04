@@ -228,6 +228,64 @@ class ModelesTests(RouteurReset):
         self.assertNotIn("gallica", a_verifier)
 
 
+class PromptsTests(unittest.TestCase):
+    PROMPTS = [a["prompt"] for a in cw.AGENTS] + [cw.PROMPT_RELECTEUR]
+
+    def test_contexte_commun_partout(self):
+        for prompt in self.PROMPTS:
+            self.assertTrue(prompt.startswith(cw.CONTEXTE_COMMUN))
+
+    def test_vocabulaire_institutionnel(self):
+        for prompt in self.PROMPTS:
+            specifique = prompt[len(cw.CONTEXTE_COMMUN):]
+            self.assertNotIn("socle", specifique.lower())
+        for mot in ("notions et mots-clés", "capacités", "repères"):
+            self.assertIn(mot, cw.PROMPT_SOURCES)
+
+    def test_parties_eleve_professeur(self):
+        for prompt in (cw.PROMPT_DOCUMENTS, cw.PROMPT_EVALUATION):
+            self.assertIn("## Partie élève", prompt)
+            self.assertIn("## Partie professeur", prompt)
+
+    def test_numerotation_documents_partagee(self):
+        self.assertIn("## Documents nécessaires", cw.PROMPT_CONCEPTION)
+        self.assertIn("Documents nécessaires", cw.PROMPT_DOCUMENTS)
+        self.assertIn("Total", cw.PROMPT_CONCEPTION)
+
+    def test_relecteur_connait_ses_cles(self):
+        for key in list(cw.VERIFICATIONS) + list(cw.CRITERES):
+            self.assertIn(key, cw.PROMPT_RELECTEUR)
+
+
+class CorrectionsMultiplesTests(RouteurReset):
+    def test_normalize_corrections(self):
+        r = cw.normalize_rapport({"notes": {"a": 3}, "corrections": [
+            {"agent": 5, "consignes": ["doc 2 manquant"]},
+            {"agent": "agent 3", "consignes": "lister le doc 2"},
+            {"agent": 9, "consignes": ["ignoré"]},
+            {"agent": 3, "consignes": ["total faux"]},
+        ]})
+        self.assertEqual(r["corrections"], [
+            {"agent": 3, "consignes": ["lister le doc 2", "total faux"]},
+            {"agent": 5, "consignes": ["doc 2 manquant"]},
+        ])
+
+    def test_each_agent_regenerated_once_in_order(self):
+        client = FakeClient()
+        out = cw.run_pipeline(client, "demande")
+        client.calls.clear()
+        rapport = cw.normalize_rapport({"notes": {"a": 3}, "corrections": [
+            {"agent": 5, "consignes": ["CONSIGNE-DOCS"]}, {"agent": 3, "consignes": ["CONSIGNE-DEROULE"]}]})
+        _, ok = cw.apply_correction(client, out, rapport)
+        self.assertTrue(ok)
+        rerun = [c for c in client.calls if c[0] in ("chat", "web")]
+        self.assertEqual([c[1] for c in rerun],
+                         [cw.PROMPT_CONCEPTION, cw.PROMPT_REDACTION, cw.PROMPT_DOCUMENTS, cw.PROMPT_EVALUATION])
+        self.assertIn("CONSIGNE-DEROULE", rerun[0][2])
+        self.assertNotIn("CONSIGNE", rerun[1][2].split("---")[-1])  # agent 4 : simple mise à jour
+        self.assertIn("CONSIGNE-DOCS", rerun[2][2])
+
+
 class RapportTests(RouteurReset):
     def test_normalize_recomputes_score(self):
         r = cw.normalize_rapport({"score_global": None, "notes": {"a": 4, "b": "5"}, "livraison": "non"})
@@ -285,6 +343,7 @@ class DocxTests(RouteurReset):
         self.assertIn("Référentiel officiel", textes)
         self.assertNotIn("1_referentiel_officiel", textes)
         self.assertIn("Modèles utilisés", textes)
+        self.assertTrue(any("Renvoi vers l'agent 3 (Déroulé de séance)" in t for t in textes))
         cells = [c.text for t in doc.tables for row in t.rows for c in row.cells]
         self.assertIn(cw.MODELES["leger"], cells)
 
