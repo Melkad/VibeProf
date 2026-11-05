@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "modules": [
+    {
+      "type": "app",
+      "name": "web",
+      "path": ".",
+      "routes": [
+        {
+          "path": "/"
+        }
+      ],
+      "port": 8501,
+      "serve": "server",
+      "runtime": "python",
+      "build": {
+        "context": ".",
+        "dockerfile": "deploy/docker/Dockerfile.web",
+        "target": "runtime"
+      },
+      "dev": {
+        "startCommand": "streamlit run app.py --server.headless true"
+      },
+      "deploy": {
+        "startCommand": "streamlit run app.py --server.address \"$HOST\" --server.port \"$PORT\" --server.headless true"
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+# syntax=docker/dockerfile:1
+FROM python:3.13-slim AS runtime
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HOST=0.0.0.0 \
+    PORT=8501
+RUN groupadd -g 1000 app && \
+    useradd -u 1000 -g 1000 -m -s /usr/sbin/nologin app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY --chown=1000:1000 . .
+USER 1000:1000
+EXPOSE 8501
+HEALTHCHECK --interval=10s --timeout=5s --retries=5 --start-period=30s \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:${PORT:-8501}/_stcore/health', timeout=5).status==200 else 1)"
+CMD ["sh", "-c", "exec streamlit run app.py --server.address \"$HOST\" --server.port \"$PORT\" --server.headless true"]
