@@ -78,5 +78,25 @@ class SuiviTests(unittest.TestCase):
         cw.evenement("2_cadrage", "en_cours")  # aucun rappel branché : sans effet
 
 
+    def test_attente_et_retours_du_professeur(self):
+        suivi = SuiviWorkflow()
+        cw.configurer_session(evenements=suivi.recevoir)
+        try:
+            cw.evenement("2_cadrage", "termine")
+            cw.mettre_en_attente(0)
+            self.assertEqual(suivi.etapes["2_cadrage"]["etat"], "attente_prof")
+            self.assertIn("à valider par le professeur", suivi.to_dot())
+            cw.evenement("demande", "retour_prof", agent=2)
+            cw.evenement("demande", "retour_prof", agent=2)
+            self.assertEqual(suivi.etapes["demande"]["etat"], "termine")
+            dot = suivi.to_dot()
+            self.assertIn('"demande" -> "2_cadrage" [style=dashed, color="#7030A0"', dot)
+            self.assertIn("retour prof ×2", dot)
+            cw.valider_etape(0)
+            self.assertEqual(suivi.etapes["2_cadrage"]["etat"], "termine")
+        finally:
+            cw.configurer_session()
+
+
 if __name__ == "__main__":
     unittest.main()

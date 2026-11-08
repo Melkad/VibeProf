@@ -566,5 +566,67 @@ class RenduEleveTests(RouteurReset):
             self.assertTrue((Path(d) / "2_cours_eleve.docx").exists())
 
 
+
+class BoucleProfesseurTests(unittest.TestCase):
+    """Génération pas à pas : pauses, retours du professeur, fin du cours."""
+
+    def setUp(self):
+        cw.ROUTEUR.reset()
+        self.client = FakeClient(rapports=[rapport_ko("agent 2"), RAPPORT_OK])
+        self.outputs = cw.demarrer_dossier("Seconde bac pro, géographie, thème : la mondialisation, 2 h, TD")
+
+    def test_avancer_pipeline_s_arrete_a_l_etape(self):
+        cw.avancer_pipeline(self.client, self.outputs, jusqu_a="2_cadrage")
+        self.assertIn("2_cadrage", self.outputs)
+        self.assertNotIn("3_deroule", self.outputs)
+        nb = len(self.client.calls)
+        cw.avancer_pipeline(self.client, self.outputs, jusqu_a="2_cadrage")  # rien à refaire
+        self.assertEqual(len(self.client.calls), nb)
+        cw.avancer_pipeline(self.client, self.outputs, jusqu_a="3_deroule")
+        self.assertIn("3_deroule", self.outputs)
+        self.assertNotIn("4_support_cours", self.outputs)
+        self.assertEqual(len(self.client.inputs_for("2_cadrage")), 1)
+
+    def test_reviser_refait_la_partie_et_ses_dependances_produites(self):
+        cw.avancer_pipeline(self.client, self.outputs, jusqu_a="2_cadrage")
+        liste = cw.reviser_partie(self.client, self.outputs, "1_referentiel_officiel",
+                                  "  Citer le programme de 2019  ")
+        self.assertEqual(self.outputs["_retours_professeur"], {"1_referentiel_officiel": ["Citer le programme de 2019"]})
+        self.assertEqual(len(self.client.inputs_for("1_referentiel_officiel")), 2)
+        self.assertEqual(len(self.client.inputs_for("2_cadrage")), 2)  # dépend du référentiel : refait
+        self.assertEqual(self.client.inputs_for("3_deroule"), [])     # pas encore produit : pas lancé
+        entree = self.client.inputs_for("1_referentiel_officiel")[-1]
+        self.assertIn("<retours_du_professeur>\n- Citer le programme de 2019\n</retours_du_professeur>", entree)
+        self.assertIn("## Ta production précédente", entree)
+        self.assertIsInstance(liste, list)
+
+    def test_commentaire_vide_ne_lance_rien(self):
+        cw.avancer_pipeline(self.client, self.outputs, jusqu_a="2_cadrage")
+        nb = len(self.client.calls)
+        cw.reviser_partie(self.client, self.outputs, "2_cadrage", "   ")
+        self.assertEqual(len(self.client.calls), nb)
+        self.assertNotIn("_retours_professeur", self.outputs)
+
+    def test_retours_conserves_jusqu_a_la_fin(self):
+        cw.avancer_pipeline(self.client, self.outputs, jusqu_a="2_cadrage")
+        cw.reviser_partie(self.client, self.outputs, "2_cadrage", "Problématique plus concrète")
+        with tempfile.TemporaryDirectory() as d:
+            res = cw.finaliser_cours(self.client, self.outputs, d, max_relectures=3)
+            final = json.loads((Path(d) / "cours_final.json").read_text(encoding="utf-8"))
+            complet = "\n".join(p.text for p in Document(Path(d) / "cours_complet.docx").paragraphs)
+        self.assertTrue(res["livre"])
+        self.assertEqual(len(res["rapports"]), 2)
+        # correction demandée par le relecteur : la demande du professeur est toujours transmise
+        entrees = self.client.inputs_for("2_cadrage")
+        self.assertEqual(len(entrees), 3)
+        self.assertIn("Revoir la durée", entrees[-1])
+        self.assertIn("Problématique plus concrète", entrees[-1])
+        relecture = [c[2] for c in self.client.calls if c[0] == "chat" and c[1] == cw.PROMPT_RELECTEUR][0]
+        self.assertIn("Demandes du professeur (déjà appliquées", relecture)
+        self.assertEqual(final["dossier"]["_retours_professeur"], {"2_cadrage": ["Problématique plus concrète"]})
+        self.assertIn("Demandes du professeur", complet)
+        self.assertIn("Cadrage\u00a0: Problématique plus concrète", complet)
+
+
 if __name__ == "__main__":
     unittest.main()

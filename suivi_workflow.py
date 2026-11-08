@@ -13,9 +13,11 @@ COULEURS = {  # état -> (fond, bordure, police)
     "correction": ("#FFF2CC", "#BF8F00", "#7F6000"),
     "termine": ("#E2F0D9", "#548235", "#385723"),
     "erreur": ("#F8D7DA", "#C00000", "#C00000"),
+    "attente_prof": ("#EDE4F7", "#7030A0", "#5B2583"),
 }
 SYMBOLES = {"attente": "en attente", "en_cours": "⏳ en cours…", "correction": "✎ correction…",
-            "termine": "✓", "erreur": "✗ erreur"}
+            "termine": "✓", "erreur": "✗ erreur",
+            "attente_prof": "🧑‍🏫 à valider par le professeur"}
 
 
 def aretes_principales():
@@ -56,6 +58,7 @@ class SuiviWorkflow:
         self.etapes["demande"]["etat"] = "termine"
         self.relecture = {}          # dernière relecture : iteration, max_relectures, score, livre
         self.renvois = []            # [(iteration, numéro d'agent)] demandés par le relecteur
+        self.retours = []            # numéros d'agents modifiés à la demande du professeur
         self.message_erreur = None
 
     # -- réception des événements du moteur
@@ -64,6 +67,12 @@ class SuiviWorkflow:
         infos = infos or {}
         e = self.etapes.get(etape)
         if e is None:
+            return
+        if etat == "retour_prof":  # signalé sur « demande » : ne change pas l'état du nœud
+            if infos.get("agent"):
+                self.retours.append(infos["agent"])
+            if self.on_change:
+                self.on_change(self)
             return
         maintenant = self.horloge()
         if etat in ("en_cours", "correction"):
@@ -158,6 +167,13 @@ class SuiviWorkflow:
                 cible = cw.AGENTS[numero - 1]["name"]
                 lignes.append(f'  "relecteur" -> "{cible}" [style=dashed, color="#BF8F00", fontcolor="#7F6000", '
                               f'fontsize=9, label=" correction {iteration}", constraint=false];')
+        for numero in sorted(set(self.retours)):
+            if 1 <= numero <= len(cw.AGENTS):
+                cible = cw.AGENTS[numero - 1]["name"]
+                nb = self.retours.count(numero)
+                libelle = " retour prof" + (f" ×{nb}" if nb > 1 else "")
+                lignes.append(f'  "demande" -> "{cible}" [style=dashed, color="#7030A0", fontcolor="#5B2583", '
+                              f'fontsize=9, label="{libelle}", constraint=false];')
         lignes.append("}")
         return "\n".join(lignes)
 

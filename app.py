@@ -132,8 +132,9 @@ def memoriser(demande, dossier_sortie, fichiers, livre, rapports, dossier, graph
     }
 
 
-def generer(cle, modeles, relectures, demande, contexte=None):
-    statut = st.status("Génération du cours en cours… (plusieurs minutes, ne fermez pas la page)", expanded=True)
+def tableau_de_bord(titre, suivi, modeles):
+    """Encadré d'avancement (barre, graphe, journal) branché sur le moteur. Retourne (statut, avancement)."""
+    statut = st.status(titre, expanded=True)
     with statut:
         barre = st.progress(0.0, text="Préparation")
         zone_graphe = st.empty()
@@ -151,9 +152,16 @@ def generer(cle, modeles, relectures, demande, contexte=None):
     def dessiner(suivi_):
         zone_graphe.graphviz_chart(suivi_.to_dot(), use_container_width=True)
 
-    suivi = SuiviWorkflow(on_change=dessiner)
+    suivi.on_change = dessiner
     dessiner(suivi)
     cw.configurer_session(modeles, journal=journal, evenements=suivi.recevoir)
+    return statut, avancement
+
+
+def generer(cle, modeles, relectures, demande, contexte=None):
+    suivi = SuiviWorkflow()
+    statut, avancement = tableau_de_bord("Génération du cours en cours… (plusieurs minutes, ne fermez pas la page)",
+                                         suivi, modeles)
     with tempfile.TemporaryDirectory(prefix="vibeprof_") as tmp:
         try:
             res = cw.generer_cours(cw.make_client(cle), demande, Path(tmp), relectures, avancement=avancement,
@@ -172,6 +180,148 @@ def generer(cle, modeles, relectures, demande, contexte=None):
             cw.configurer_session()  # ne pas garder le journal de l'interface dans ce fil
         memoriser(demande, tmp, res["fichiers"], res["livre"], res["rapports"], res["dossier"], suivi.to_dot())
     statut.update(label="Cours généré", state="complete", expanded=False)
+
+
+# --------------------------------------------------------------------------- génération pas à pas
+
+def parties_etape(boucle):
+    return cw.ETAPES_VALIDATION[boucle["etape"]]["parties"]
+
+
+def executer(boucle, cle, modeles, titre, action):
+    """Lance `action(client, avancement)` avec l'encadré d'avancement. Retourne False (et affiche l'erreur)
+    en cas d'échec ; le dossier déjà produit est conservé pour pouvoir réessayer."""
+    suivi = boucle["suivi"]
+    statut, avancement = tableau_de_bord(titre, suivi, modeles)
+    try:
+        action(cw.make_client(cle), avancement)
+    except Exception as exc:
+        suivi.marquer_erreur(str(exc))
+        statut.update(label="La génération a échoué", state="error", expanded=True)
+        st.error(f"{exc}\n\nVérifiez votre clé API et réessayez : ce qui a déjà été rédigé est conservé.")
+        st.download_button("Télécharger les productions partielles (JSON)",
+                           json.dumps(boucle["outputs"], ensure_ascii=False, indent=2), "cours_partiel.json",
+                           "application/json", key="partiel_boucle")
+        return False
+    finally:
+        cw.configurer_session()  # ne pas garder le journal de l'interface dans ce fil
+        suivi.on_change = None   # le suivi reste en session : pas de référence aux éléments de cette page
+    statut.update(label="Étape terminée", state="complete", expanded=False)
+    return True
+
+
+def demarrer_pas_a_pas(cle, modeles, demande, contexte):
+    boucle = {"demande": demande, "outputs": cw.demarrer_dossier(demande, contexte), "etape": 0,
+              "suivi": SuiviWorkflow(), "controles": [], "version": 0}
+
+    def action(client, avancement):
+        avancement(0.0, "Rédaction jusqu'à l'étape de validation 1")
+        cw.avancer_pipeline(client, boucle["outputs"], jusqu_a=parties_etape(boucle)[-1])
+        cw.mettre_en_attente(0)
+        boucle["controles"] = cw.controles_du_dossier(boucle["outputs"])
+        avancement(1.0, "En attente de votre validation")
+
+    if executer(boucle, cle, modeles, "Rédaction de la première étape… (ne fermez pas la page)", action):
+        st.session_state["boucle"] = boucle
+        st.rerun()
+
+
+def appliquer_retours(boucle, cle, modeles, commentaires):
+    def action(client, avancement):
+        for i, (nom, texte) in enumerate(commentaires.items()):
+            avancement(i / len(commentaires), f"Modification : {cw.AGENTS_BY_NAME[nom]['title']}")
+            boucle["controles"] = cw.reviser_partie(client, boucle["outputs"], nom, texte)
+        cw.mettre_en_attente(boucle["etape"])
+        avancement(1.0, "En attente de votre validation")
+
+    if executer(boucle, cle, modeles, "Prise en compte de vos modifications…", action):
+        boucle["version"] += 1  # nouvelles zones de commentaire, vides
+        st.rerun()
+
+
+def valider_et_continuer(boucle, cle, modeles, relectures):
+    suivante = boucle["etape"] + 1
+    if suivante < len(cw.ETAPES_VALIDATION):
+        def action(client, avancement):
+            cw.valider_etape(boucle["etape"])
+            avancement(0.0, f"Rédaction jusqu'à l'étape de validation {suivante + 1}")
+            cw.avancer_pipeline(client, boucle["outputs"], jusqu_a=cw.ETAPES_VALIDATION[suivante]["parties"][-1])
+            cw.mettre_en_attente(suivante)
+            boucle["controles"] = cw.controles_du_dossier(boucle["outputs"])
+            avancement(1.0, "En attente de votre validation")
+
+        if executer(boucle, cle, modeles, "Rédaction de l'étape suivante… (ne fermez pas la page)", action):
+            boucle["etape"] = suivante
+            st.rerun()
+        return
+
+    with tempfile.TemporaryDirectory(prefix="vibeprof_") as tmp:
+        def action(client, avancement):
+            cw.valider_etape(boucle["etape"])
+            res = cw.finaliser_cours(client, boucle["outputs"], Path(tmp), relectures, avancement=avancement)
+            memoriser(boucle["demande"], tmp, res["fichiers"], res["livre"], res["rapports"], res["dossier"],
+                      boucle["suivi"].to_dot())
+
+        ok = executer(boucle, cle, modeles,
+                      "Rédaction de la fin du cours et relecture… (plusieurs minutes, ne fermez pas la page)", action)
+    if ok:
+        del st.session_state["boucle"]
+        st.rerun()
+
+
+def afficher_validation(boucle, cle, modeles, relectures):
+    etape = cw.ETAPES_VALIDATION[boucle["etape"]]
+    st.divider()
+    st.subheader(f"🧑‍🏫 Étape {boucle['etape'] + 1}/{len(cw.ETAPES_VALIDATION)} : {etape['titre']}")
+    st.markdown("Relisez cette partie avant que la suite du cours soit rédigée. Si quelque chose ne convient "
+                "pas, écrivez ce qu'il faut modifier : la partie sera refaite, puis vous pourrez la relire à "
+                "nouveau. Sinon, validez pour continuer.")
+    with st.expander("Parcours du workflow"):
+        st.graphviz_chart(boucle["suivi"].to_dot(), use_container_width=True)
+        legende()
+
+    commentaires = {}
+    for nom in etape["parties"]:
+        agent = cw.AGENTS_BY_NAME[nom]
+        st.markdown(f"#### {agent['title']}")
+        with st.container(border=True, height=450):
+            st.markdown(reduire_titres(boucle["outputs"].get(nom, "")))
+        precedents = (boucle["outputs"].get("_retours_professeur") or {}).get(nom) or []
+        if precedents:
+            st.caption("Déjà demandé : " + " · ".join(precedents))
+        texte = st.text_area(f"Ce qu'il faut modifier — {agent['title']} (facultatif)", height=80,
+                             max_chars=800, key=f"retour_{nom}_{boucle['version']}",
+                             placeholder="ex : problématique plus concrète, partir d'un exemple local")
+        if texte.strip():
+            commentaires[nom] = texte.strip()
+
+    afficher_controles(boucle["controles"])
+
+    c1, c2, c3 = st.columns([2, 2, 1])
+    appliquer = c1.button("✎ Appliquer mes modifications", use_container_width=True, key="appliquer")
+    dernier = boucle["etape"] + 1 == len(cw.ETAPES_VALIDATION)
+    valider = c2.button("✓ Valider et terminer le cours" if dernier else "✓ Valider et continuer",
+                        type="primary", use_container_width=True, key="valider")
+    abandonner = c3.button("Abandonner", use_container_width=True, key="abandonner")
+
+    if abandonner:
+        del st.session_state["boucle"]
+        st.rerun()
+    elif appliquer:
+        if not commentaires:
+            st.warning("Écrivez d'abord ce qu'il faut modifier dans au moins une zone de commentaire.")
+        elif not cle:
+            st.error("Saisissez votre clé API Mistral dans la barre latérale.")
+        else:
+            appliquer_retours(boucle, cle, modeles, commentaires)
+    elif valider:
+        if commentaires:
+            st.warning("Vous avez écrit des modifications : cliquez sur « Appliquer mes modifications », ou "
+                       "videz les zones de commentaire pour valider la partie telle quelle.")
+        elif not cle:
+            st.error("Saisissez votre clé API Mistral dans la barre latérale.")
+        else:
+            valider_et_continuer(boucle, cle, modeles, relectures)
 
 
 def rouvrir(fichier):
@@ -200,8 +350,19 @@ def reduire_titres(markdown, decalage=3):
 
 
 def legende():
-    st.caption("⬜ en attente · 🟦 en cours · 🟨 correction demandée par le relecteur · 🟩 terminé · 🟥 erreur "
-               "— flèches pointillées : renvois du relecteur")
+    st.caption("⬜ en attente · 🟦 en cours · 🟪 à valider par le professeur · 🟨 correction · 🟩 terminé · "
+               "🟥 erreur — flèches pointillées : renvois du relecteur (jaune) et retours du professeur (violet)")
+
+
+def afficher_controles(liste):
+    with st.expander(f"Contrôles automatiques ({len(liste)} point(s) à vérifier)" if liste
+                     else "Contrôles automatiques : aucun problème détecté"):
+        st.caption("Vérifiés par le programme : durées, documents prévus et produits, capacités officielles, "
+                   "objectifs évalués, sources, longueurs.")
+        for c in liste:
+            c = c if isinstance(c, dict) else c.to_dict()
+            icone = "⛔" if c["gravite"] == "bloquant" else "⚠️"
+            st.markdown(f"{icone} **{cw.AGENTS[c['agent'] - 1]['title']}** — {c['message']}")
 
 
 def archive_zip(res):
@@ -229,14 +390,7 @@ def afficher_resultat(res):
             st.warning(f"Contrôle qualité : {score}/5, sous le seuil de {cw.SEUIL_LIVRAISON}/5. "
                        "Relisez attentivement le cours avant de l'utiliser (détails dans la fiche professeur).")
 
-        liste = dernier.get("controles") or []
-        with st.expander(f"Contrôles automatiques ({len(liste)} point(s) à vérifier)" if liste
-                         else "Contrôles automatiques : aucun problème détecté"):
-            st.caption("Vérifiés par le programme : durées, documents prévus et produits, capacités officielles, "
-                       "objectifs évalués, sources, longueurs.")
-            for c in liste:
-                icone = "⛔" if c["gravite"] == "bloquant" else "⚠️"
-                st.markdown(f"{icone} **{cw.AGENTS[c['agent'] - 1]['title']}** — {c['message']}")
+        afficher_controles(dernier.get("controles") or [])
 
     if res.get("graphe"):
         with st.expander("Parcours du workflow"):
@@ -285,27 +439,35 @@ def main():
     st.markdown("Créez une séance d'**histoire-géographie-EMC pour le lycée professionnel**, ancrée dans le "
                 "programme officiel : fiche professeur, cours, documents et évaluation prêts à imprimer.")
 
+    verrou = "boucle" in st.session_state  # un cours est en cours de validation : formulaire figé
     with st.container(border=True):
         c1, c2 = st.columns(2)
-        classe = c1.selectbox("Classe", CLASSES, index=2, key="classe")
-        specialite = c2.text_input("Spécialité", key="specialite", placeholder="ex : Métiers du commerce et de la vente")
-        discipline = st.radio("Discipline", DISCIPLINES, horizontal=True, key="discipline")
+        classe = c1.selectbox("Classe", CLASSES, index=2, key="classe", disabled=verrou)
+        specialite = c2.text_input("Spécialité", key="specialite", disabled=verrou,
+                                   placeholder="ex : Métiers du commerce et de la vente")
+        discipline = st.radio("Discipline", DISCIPLINES, horizontal=True, key="discipline", disabled=verrou)
         contexte = contexte_formulaire(classe, discipline, "")
         themes = THEMES_OFFICIELS.get((contexte.classe, contexte.discipline), [])
         choix = st.selectbox("Thème du programme officiel", themes + [AUTRE_THEME], key="theme_officiel",
+                             disabled=verrou,
                              help="Thèmes des programmes en vigueur pour cette classe et cette discipline.")
         theme = choix
         if choix == AUTRE_THEME:
-            theme = st.text_input("Thème de la séance *", key="theme",
+            theme = st.text_input("Thème de la séance *", key="theme", disabled=verrou,
                                   placeholder="ex : une étude de cas sur un port de commerce")
         c3, c4 = st.columns(2)
-        duree = c3.selectbox("Durée", DUREES, index=3, key="duree",
+        duree = c3.selectbox("Durée", DUREES, index=3, key="duree", disabled=verrou,
                              format_func=lambda d: f"{d} ({duree_effective(d)} min de cours)",
                              help="Une heure de cours compte 55 minutes.")
-        format_ = c4.selectbox("Format", FORMATS, key="format")
+        format_ = c4.selectbox("Format", FORMATS, key="format", disabled=verrou)
         precisions = st.text_area("Précisions (facultatif)", height=80, max_chars=800, key="precisions",
+                                  disabled=verrou,
                                   placeholder="ex : classe avec plusieurs élèves allophones ; insister sur la carte")
-        envoye = st.button("Générer le cours", type="primary", use_container_width=True)
+        pas_a_pas = st.checkbox("Valider le cadrage et le déroulé avant la suite", value=True,
+                                key="validation_etapes", disabled=verrou,
+                                help="La génération s'arrête après le cadrage, puis après le déroulé : vous "
+                                     "relisez, demandez des modifications si besoin, puis validez.")
+        envoye = st.button("Générer le cours", type="primary", use_container_width=True, disabled=verrou)
 
     if envoye:
         if not theme.strip():
@@ -314,12 +476,15 @@ def main():
             st.error("Saisissez votre clé API Mistral dans la barre latérale.")
         else:
             st.session_state.pop("resultat", None)
-            generer(cle, modeles, relectures,
-                    construire_demande(classe, specialite, discipline, theme, duree, format_, precisions),
-                    contexte_formulaire(classe, discipline, duree))
+            demande = construire_demande(classe, specialite, discipline, theme, duree, format_, precisions)
+            if pas_a_pas:
+                demarrer_pas_a_pas(cle, modeles, demande, contexte_formulaire(classe, discipline, duree))
+            else:
+                generer(cle, modeles, relectures, demande, contexte_formulaire(classe, discipline, duree))
 
-    if "resultat" in st.session_state:
+    if "boucle" in st.session_state:
+        afficher_validation(st.session_state["boucle"], cle, modeles, relectures)
+    elif "resultat" in st.session_state:
         afficher_resultat(st.session_state["resultat"])
-
 
 main()

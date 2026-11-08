@@ -2,6 +2,19 @@
 
 Workflow agentique (API Mistral) qui génère une séance d'histoire-géographie pour le lycée professionnel, ancrée dans les programmes officiels, et l'exporte en `.docx`.
 
+## Nouveautés de la version 2 : la boucle avec le professeur
+
+La génération ne se fait plus forcément d'une traite : **le professeur valide les étapes clés** avant que la suite soit rédigée.
+
+1. **Programme et cadrage** : relecture du référentiel officiel et du cadrage (problématique, objectifs, découpage horaire).
+2. **Déroulé de séance** : relecture des étapes, consignes et documents prévus.
+
+À chaque pause, une zone « Ce qu'il faut modifier » accompagne chaque partie. Le commentaire est transmis à l'agent concerné, qui refait sa production ; les parties déjà rédigées qui en dépendent sont mises à jour (une retouche du référentiel refait aussi le cadrage). Les contrôles automatiques sont recalculés aussitôt, sans relecteur IA. On peut retoucher autant de fois que nécessaire, puis « Valider et continuer ». Après la dernière validation, la fin du cours est rédigée, relue par le relecteur et mise en page comme avant.
+
+Les demandes du professeur restent transmises à l'agent lors des corrections suivantes (le relecteur ne peut pas les défaire), le relecteur les reçoit comme « déjà appliquées », et elles sont conservées dans `cours_final.json` (`dossier._retours_professeur`) et en annexe de `cours_complet.docx`. Sur le graphe du workflow, les parties à valider sont en violet et les retours du professeur apparaissent en flèches pointillées violettes.
+
+Décocher « Valider le cadrage et le déroulé avant la suite » dans le formulaire retrouve la génération d'une traite. En ligne de commande, `course_workflow.py` génère toujours d'une traite ; les fonctions `demarrer_dossier`, `avancer_pipeline`, `reviser_partie` et `finaliser_cours` permettent de piloter la boucle depuis un autre programme.
+
 ## Interface web (sans environnement de développement)
 
 VibeProf s'utilise depuis le navigateur : on remplit un formulaire (classe, spécialité, discipline, thème choisi parmi les thèmes officiels en vigueur ou saisi librement, durée, format), on suit la progression sur un **graphe du workflow** mis à jour en direct (agent en cours, terminé avec sa durée, renvois du relecteur en pointillés), puis on télécharge les documents Word (un par un ou en `.zip`) et on les prévisualise.

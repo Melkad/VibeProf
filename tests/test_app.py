@@ -76,6 +76,7 @@ class AppTests(unittest.TestCase):
             at.selectbox(key="classe").set_value("Seconde bac pro").run()
             at.radio(key="discipline").set_value("Géographie").run()
             at.text_input(key="specialite").input("Commerce")
+            at.checkbox(key="validation_etapes").uncheck()
             at.button[0].click().run()
         self.assertFalse(at.exception, at.exception)
         demande = client.calls[1][2]  # entrée de l'agent 1
@@ -128,6 +129,57 @@ class AppTests(unittest.TestCase):
         self.assertEqual(d, "CAP 1re année, emc, thème : La laïcité, 55 min, Cours dialogué")
         d = ns["construire_demande"]("Seconde bac pro", "MELEC", "Histoire", "X", "1 h", "TD", "élèves allophones")
         self.assertTrue(d.endswith(". Précisions du professeur : élèves allophones"))
+
+
+    def test_validation_par_etapes(self):
+        client = FakeClient(rapports=[RAPPORT_OK])
+        with mock.patch.object(cw, "make_client", return_value=client):
+            at = self.run_app()
+            at.text_input(key="cle_api").input("cle-test")
+            remplir(at).button[0].click().run()
+            self.assertFalse(at.exception, at.exception)
+            # pause 1 : programme et cadrage, rien d'autre n'est rédigé
+            self.assertIn("Étape 1/2", at.subheader[0].value)
+            self.assertEqual(client.inputs_for("3_deroule"), [])
+            self.assertTrue(at.button[0].disabled)  # formulaire figé pendant la validation
+            at.button(key="appliquer").click().run()
+            self.assertIn("au moins une zone", at.warning[0].value)
+            at.text_area(key="retour_2_cadrage_0").input("Problématique plus concrète")
+            at.button(key="valider").click().run()
+            self.assertIn("Appliquer mes modifications", at.warning[0].value)  # commentaire non appliqué
+            self.assertEqual(at.session_state["boucle"]["etape"], 0)
+            at.button(key="appliquer").click().run()
+            self.assertFalse(at.exception, at.exception)
+            self.assertEqual(len(client.inputs_for("2_cadrage")), 2)
+            self.assertIn("Problématique plus concrète", client.inputs_for("2_cadrage")[-1])
+            self.assertEqual(at.text_area(key="retour_2_cadrage_1").value, "")  # zone vidée
+            self.assertTrue(any("Déjà demandé" in c.value for c in at.caption))
+            # pause 2 : déroulé
+            at.button(key="valider").click().run()
+            self.assertIn("Étape 2/2", at.subheader[0].value)
+            self.assertEqual(len(client.inputs_for("3_deroule")), 1)
+            self.assertEqual(client.inputs_for("4_support_cours"), [])
+            # fin : rédaction du reste, relecture, documents
+            at.button(key="valider").click().run()
+        self.assertFalse(at.exception, at.exception)
+        self.assertNotIn("boucle", at.session_state)
+        res = at.session_state["resultat"]
+        self.assertTrue(res["livre"])
+        self.assertEqual(len(at.get("download_button")), 6)
+        self.assertEqual(json.loads(res["json"])["dossier"]["_retours_professeur"],
+                         {"2_cadrage": ["Problématique plus concrète"]})
+        self.assertIn('"demande" -> "2_cadrage" [style=dashed', res["graphe"])
+        self.assertFalse(at.button[0].disabled)
+
+    def test_abandon_de_la_validation(self):
+        with mock.patch.object(cw, "make_client", return_value=FakeClient()):
+            at = self.run_app()
+            at.text_input(key="cle_api").input("cle-test")
+            remplir(at).button[0].click().run()
+            at.button(key="abandonner").click().run()
+        self.assertNotIn("boucle", at.session_state)
+        self.assertNotIn("resultat", at.session_state)
+        self.assertFalse(at.button[0].disabled)
 
 
 if __name__ == "__main__":
