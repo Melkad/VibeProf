@@ -1,0 +1,62 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap");
+/* Maquette v3 : CSS léger. Accroches : classes st-key-NOM posées par Streamlit et data-testid. */
+
+.stApp { background: #F6F7F9; font-family: Inter, system-ui, sans-serif; }
+[data-testid="stHeader"] { background: transparent; }
+h1, h2, h3 { font-family: "Space Grotesk", Inter, sans-serif !important; letter-spacing: -0.01em; }
+h1 { font-size: 2.3rem !important; line-height: 1.15 !important; }
+
+/* Cartes : containers dont la clé commence par carte */
+[class*="st-key-carte"] {
+  background: #FFFFFF; border: 1px solid #E3E6EB !important; border-radius: 18px !important;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, .04), 0 8px 24px rgba(17, 24, 39, .05); padding: 22px !important;
+}
+[class*="st-key-carte_ok"] { border-color: #9FD3B5 !important; }
+[class*="st-key-carte_modif"] { border-color: #F3C98B !important; background: #FFFCF7; }
+
+/* Boutons */
+button[data-testid^="stBaseButton"] { min-height: 46px; border-radius: 12px; font-weight: 500; }
+button[data-testid="stBaseButton-primary"] { font-weight: 600; box-shadow: 0 4px 14px rgba(47, 85, 212, .25); }
+.st-key-cta button { min-height: 56px; font-size: 1.05rem; }
+
+/* Tuiles de choix : boutons dont la clé commence par tuile */
+[class*="st-key-tuile"] button {
+  width: 100%; min-height: 92px; justify-content: flex-start; text-align: left; padding: 14px 18px;
+  background: #FFFFFF; border: 1.5px solid #DDE2E8; border-radius: 16px;
+  transition: border-color .15s, box-shadow .15s, transform .15s;
+}
+[class*="st-key-tuile"] button:hover { border-color: #2F55D4; box-shadow: 0 6px 18px rgba(47, 85, 212, .12); transform: translateY(-1px); }
+[class*="st-key-tuile"] button p { white-space: pre-line; font-size: 1.02rem; line-height: 1.35; }
+[class*="st-key-tuile"] button > div, [class*="st-key-tuile"] button [data-testid="stMarkdownContainer"] {
+  width: 100%; justify-content: flex-start; text-align: left;
+}
+[class*="st-key-tuile_on"] button { border: 2px solid #2F55D4; background: #EEF2FD; color: #1E3FA8; }
+
+/* Pastilles des choix déjà faits (retour direct à une question) */
+[class*="st-key-puce"] button {
+  min-height: 34px; padding: 2px 12px; border-radius: 999px; background: #EEF2FD; border: 0;
+  color: #1E3FA8; font-size: .85rem;
+}
+
+/* Barre d'actions collante en bas de la relecture */
+.st-key-barre_actions {
+  position: sticky; bottom: 14px; z-index: 20; background: #FFFFFF; border: 1px solid #E3E6EB;
+  border-radius: 18px; padding: 12px 16px; box-shadow: 0 -2px 24px rgba(17, 24, 39, .12);
+}
+
+/* Bandeau d'accueil */
+.st-key-hero {
+  background: #1E3FA8; border-radius: 24px;
+  padding: 40px 36px !important; color: #FFFFFF;
+}
+.st-key-hero h1, .st-key-hero [data-testid="stMarkdownContainer"] p { color: #FFFFFF !important; }
+.st-key-hero button { box-shadow: none; }
+.st-key-hero button[data-testid="stBaseButton-primary"] { background: #FFFFFF; border: 0; }
+.st-key-hero button[data-testid="stBaseButton-primary"] * { color: #1E3FA8 !important; }
+.st-key-hero button:not([data-testid="stBaseButton-primary"]) {
+  background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .6);
+}
+.st-key-hero button:not([data-testid="stBaseButton-primary"]) * { color: #FFFFFF !important; }
+
+/* Barres de progression plus épaisses */
+[data-testid="stProgress"] > div > div > div { height: 8px; border-radius: 999px; }

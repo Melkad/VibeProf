@@ -5,30 +5,12 @@ Lancement (le thème est lu dans maquette_streamlit/.streamlit/config.toml) :
 """
 import streamlit as st
 
+from donnees import CRITERES, DECOUPAGE, DOCUMENTS, OBJECTIFS, THEMES
+
 st.set_page_config(page_title="VibeProf — maquette", page_icon=":material/menu_book:", layout="wide")
 
 ECRANS = ["1 · Nouvelle séance", "2 · Rédaction en cours", "3 · Validation du cadrage", "4 · Séance prête"]
 ETAPES = ["Ma séance", "Cadrage", "Déroulé", "Mes documents"]
-THEMES = {
-    "Des réseaux de production et d'échanges mondialisés": "Seconde professionnelle · arrêté du 3 avril 2019",
-    "Une circulation croissante mais diverse des personnes à l'échelle mondiale":
-        "Seconde professionnelle · arrêté du 3 avril 2019",
-    "Autre sujet, saisi librement": "Vous décrivez le thème vous-même",
-}
-OBJECTIFS = [
-    ("Décrire le trajet d'un produit importé jusqu'à un magasin.", "Mener et construire une démarche géographique"),
-    ("Situer les grandes routes maritimes et les principaux ports.", "Se repérer"),
-    ("Expliquer le rôle des ports dans les échanges mondiaux.", "Contextualiser"),
-]
-DECOUPAGE = [("Accroche", 10), ("Trajet d'un produit", 35), ("Les ports", 35), ("Croquis", 20), ("Trace écrite", 10)]
-DOCUMENTS = [
-    ("Fiche professeur", "Pour vous", "blue", "Cadrage, déroulé, corrigés · 3 pages", "assignment_ind"),
-    ("Cours élève", "À distribuer", "green", "Ce que je retiens, vocabulaire, schéma · 2 pages", "school"),
-    ("Documents élèves", "À distribuer", "green", "3 documents, questions, croquis · 2 pages", "folder_open"),
-    ("Évaluation", "À distribuer", "green", "Quiz, réflexion, auto-évaluation · 1 page", "quiz"),
-]
-CRITERES = [("Ancrage au programme officiel", 5), ("Clarté et réalisme du déroulé", 4), ("Niveau de langage", 4),
-            ("Cohérence d'ensemble", 5), ("Exactitude factuelle", 4)]
 RECAP = "Seconde bac pro Commerce · Géographie · 2 h de TD"
 
 if "retours" not in st.session_state:
