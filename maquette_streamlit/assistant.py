@@ -1,8 +1,11 @@
 """Maquette VibeProf v3 : assistant pas à pas, Streamlit + CSS léger (style.css). Données d'exemple, aucun appel
 à l'API.
 
-Lancement (le thème est lu dans maquette_streamlit/.streamlit/config.toml) :
-    cd maquette_streamlit && streamlit run assistant.py
+Lancement local : cd maquette_streamlit && streamlit run assistant.py
+
+Streamlit Community Cloud : dépôt Melkad/VibeProf, fichier principal maquette_streamlit/assistant.py. Les dépendances
+viennent de maquette_streamlit/requirements.txt ; les couleurs du thème sont aussi dans style.css, car Cloud peut
+n'appliquer que le .streamlit/config.toml racine (celui de l'application réelle).
 """
 import time
 from pathlib import Path

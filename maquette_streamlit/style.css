@@ -30,7 +30,7 @@ button[data-testid="stBaseButton-primary"] { font-weight: 600; box-shadow: 0 4px
 [class*="st-key-tuile"] button > div, [class*="st-key-tuile"] button [data-testid="stMarkdownContainer"] {
   width: 100%; justify-content: flex-start; text-align: left;
 }
-[class*="st-key-tuile_on"] button { border: 2px solid #2F55D4; background: #EEF2FD; color: #1E3FA8; }
+[class*="st-key-tuile_on"] button { border: 2px solid #2F55D4 !important; background: #EEF2FD !important; color: #1E3FA8; }
 
 /* Pastilles des choix déjà faits (retour direct à une question) */
 [class*="st-key-puce"] button {
@@ -60,3 +60,18 @@ button[data-testid="stBaseButton-primary"] { font-weight: 600; box-shadow: 0 4px
 
 /* Barres de progression plus épaisses */
 [data-testid="stProgress"] > div > div > div { height: 8px; border-radius: 999px; }
+
+/* Couleurs du thème de la maquette, reprises ici : sur Streamlit Cloud seul le config.toml racine est garanti */
+.stApp { color: #111827; }
+button[data-testid="stBaseButton-primary"] { background-color: #2F55D4; border-color: #2F55D4; color: #FFFFFF; }
+button[data-testid="stBaseButton-primary"]:hover { background-color: #1E3FA8; border-color: #1E3FA8; }
+[data-testid="stProgressBarTrack"] { background-color: #E8EBF0; }
+[data-testid="stProgressBarTrack"] div { background-color: #2F55D4; }
+[data-testid="stButtonGroup"] button[aria-checked="true"] {
+  background-color: #EEF2FD !important; border-color: #2F55D4 !important; color: #1E3FA8 !important;
+}
+[data-testid="stButtonGroup"] button[aria-checked="true"] * { color: #1E3FA8 !important; }
+[data-testid="stCheckbox"][data-selected="true"] label > div:not([data-testid]) { background-color: #2F55D4 !important; }
+[data-testid="stRadioOption"] div div { border-color: #2F55D4 !important; }
+[data-testid="stRadioOption"]:has(input:checked) div div { background-color: #2F55D4 !important; }
+[data-testid="stTextInputRootElement"], [data-testid="stTextArea"] textarea { background-color: #F3F5F8; }
